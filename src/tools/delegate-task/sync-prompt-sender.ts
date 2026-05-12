@@ -8,7 +8,7 @@ import {
 } from "../../shared/model-suggestion-retry"
 import { formatDetailedError } from "./error-formatting"
 import { getAgentToolRestrictions } from "../../shared/agent-tool-restrictions"
-import { stripInvisibleAgentCharacters } from "../../shared/agent-display-names"
+import { normalizeAgentForPromptKey, stripInvisibleAgentCharacters } from "../../shared/agent-display-names"
 import { applySessionPromptParams } from "../../shared/session-prompt-params-helpers"
 import { setSessionTools } from "../../shared/session-tools-store"
 import { createInternalAgentTextPart } from "../../shared/internal-initiator-marker"
@@ -21,6 +21,44 @@ type SendSyncPromptDeps = {
 const sendSyncPromptDeps: SendSyncPromptDeps = {
   promptWithModelSuggestionRetry,
   promptSyncWithModelSuggestionRetry,
+}
+
+function extractPromptErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  if (typeof error === "string") {
+    return error
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const obj = error as Record<string, unknown>
+    const messagePaths = [
+      obj.message,
+      obj.error,
+      (obj.data as Record<string, unknown> | undefined)?.message,
+      (obj.data as Record<string, unknown> | undefined)?.error,
+      (obj.error as Record<string, unknown> | undefined)?.message,
+    ]
+
+    for (const candidate of messagePaths) {
+      if (typeof candidate === "string" && candidate.length > 0) {
+        return candidate
+      }
+    }
+
+    try {
+      const json = JSON.stringify(error)
+      if (json && json !== "{}") {
+        return json
+      }
+    } catch {
+      // Fall back to String(error) below.
+    }
+  }
+
+  return String(error)
 }
 
 function buildPromptGenerationParams(model: DelegatedModelConfig | undefined): Record<string, unknown> {
@@ -81,7 +119,7 @@ export async function sendSyncPrompt(
   const promptArgs = {
     path: { id: input.sessionID },
     body: {
-      agent: stripInvisibleAgentCharacters(input.agentToUse),
+      agent: normalizeAgentForPromptKey(input.agentToUse) ?? stripInvisibleAgentCharacters(input.agentToUse),
       system: input.systemContent,
       tools,
       parts: [createInternalAgentTextPart(effectivePrompt)],
@@ -113,7 +151,7 @@ export async function sendSyncPrompt(
     if (input.toastManager && input.taskId !== undefined) {
       input.toastManager.removeTask(input.taskId)
     }
-    const errorMessage = promptError instanceof Error ? promptError.message : String(promptError)
+    const errorMessage = extractPromptErrorMessage(promptError)
     if (errorMessage.includes("agent.name") || errorMessage.includes("undefined")) {
       return formatDetailedError(new Error(`Agent "${input.agentToUse}" not found. Make sure the agent is registered in your opencode.json or provided by a plugin.`), {
         operation: "Send prompt to agent",
@@ -123,7 +161,7 @@ export async function sendSyncPrompt(
         category: input.args.category,
       })
     }
-    return formatDetailedError(promptError, {
+    return formatDetailedError(new Error(errorMessage), {
       operation: "Send prompt",
       args: input.args,
       sessionID: input.sessionID,

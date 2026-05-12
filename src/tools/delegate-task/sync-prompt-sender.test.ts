@@ -224,6 +224,46 @@ bunDescribe("sendSyncPrompt", () => {
     bunExpect(promptArgs.body.variant).toBe("medium")
   })
 
+  bunTest("normalizes Sisyphus-Junior display name to prompt agent key", async () => {
+    //#given
+    const { sendSyncPrompt } = require("./sync-prompt-sender")
+
+    let promptArgs: any
+    const promptWithModelSuggestionRetry = bunMock(async (_client: any, input: any) => {
+      promptArgs = input
+    })
+
+    const input = {
+      sessionID: "test-session",
+      agentToUse: "Sisyphus-Junior",
+      args: {
+        description: "test task",
+        prompt: "test prompt",
+        category: "quick",
+        run_in_background: false,
+        load_skills: [],
+      },
+      systemContent: undefined,
+      categoryModel: undefined,
+      toastManager: null,
+      taskId: undefined,
+    }
+
+    //#when
+    await sendSyncPrompt(
+      { session: { promptAsync: bunMock(async () => ({ data: {} })) } },
+      input,
+      {
+        promptWithModelSuggestionRetry,
+        promptSyncWithModelSuggestionRetry: bunMock(async () => {}),
+      },
+    )
+
+    //#then
+    bunExpect(promptWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
+    bunExpect(promptArgs.body.agent).toBe("sisyphus-junior")
+  })
+
   bunTest("passes promoted fallback model settings through supported prompt channels", async () => {
     //#given
     const { sendSyncPrompt } = require("./sync-prompt-sender")
@@ -411,5 +451,48 @@ bunDescribe("sendSyncPrompt", () => {
     bunExpect(result).toContain("Unexpected EOF")
     bunExpect(promptWithModelSuggestionRetry).toHaveBeenCalledTimes(1)
     bunExpect(promptSyncWithModelSuggestionRetry).toHaveBeenCalledTimes(0)
+  })
+
+  bunTest("formats plain-object prompt errors without degrading to object tag", async () => {
+    //#given
+    const { sendSyncPrompt } = require("./sync-prompt-sender")
+
+    const promptWithModelSuggestionRetry = bunMock(async () => {
+      throw {
+        error: {
+          message: "Unknown Agent",
+        },
+      }
+    })
+
+    const input = {
+      sessionID: "test-session",
+      agentToUse: "Sisyphus-Junior",
+      args: {
+        description: "test task",
+        prompt: "test prompt",
+        category: "quick",
+        run_in_background: false,
+        load_skills: [],
+      },
+      systemContent: undefined,
+      categoryModel: undefined,
+      toastManager: null,
+      taskId: undefined,
+    }
+
+    //#when
+    const result = await sendSyncPrompt(
+      { session: { promptAsync: bunMock(async () => ({ data: {} })) } },
+      input,
+      {
+        promptWithModelSuggestionRetry,
+        promptSyncWithModelSuggestionRetry: bunMock(async () => {}),
+      },
+    )
+
+    //#then
+    bunExpect(result).toContain("Unknown Agent")
+    bunExpect(result).not.toContain("[object Object]")
   })
 })
