@@ -45,21 +45,22 @@ export function createDelegateTaskPresentation(options: DelegateTaskToolOptions)
   task(description="...", prompt="...", run_in_background=false)  // ❌ FAILS - missing category AND subagent_type
   \`\`\`
   
-  **CORRECT - Using category:**
-  \`\`\`
-  task(category="quick", load_skills=[], description="Fix type error", prompt="...", run_in_background=false)
-  \`\`\`
-  
-  **CORRECT - Using subagent_type:**
+  **LOCAL DEFAULT - Always provide subagent_type explicitly:**
   \`\`\`
   task(subagent_type="explore", load_skills=[], description="Find patterns", prompt="...", run_in_background=true)
+  \`\`\`
+  
+  **OPTIONAL - Add category only as supplemental routing/model context:**
+  \`\`\`
+  task(subagent_type="sisyphus", category="quick", load_skills=[], description="Fix type error", prompt="...", run_in_background=false)
   \`\`\`
   
   REQUIRED: Provide ONE of:
   - category: For task delegation (uses Sisyphus-Junior with category-optimized model)
   - subagent_type: For direct agent invocation (explore, librarian, oracle, etc.)
   
-  **DO NOT provide both.** If category is provided, subagent_type is ignored.
+  LOCAL WORKSPACE GOVERNANCE: Always provide subagent_type explicitly.
+  category may be added only as supplemental routing/model context.
   
   - load_skills: ALWAYS REQUIRED. Pass [] if no skills needed, or ["skill-1", "skill-2"] for category tasks.
   - category: Use predefined category → Spawns Sisyphus-Junior with category config

@@ -15,4 +15,18 @@ describe("createDelegateTaskPresentation", () => {
     expect(description).toContain("busy/retry/running")
     expect(description).toContain("not a total wall-clock limit")
   })
+
+  test("#given local workspace governance #when description is rendered #then category-only is not presented as the correct local default", () => {
+    //#given
+    const presentation = createDelegateTaskPresentation({})
+
+    //#when
+    const description = presentation.description
+
+    //#then
+    expect(description).not.toContain("**CORRECT - Using category:**")
+    expect(description).not.toContain("If category is provided, subagent_type is ignored")
+    expect(description).toContain("Always provide subagent_type explicitly")
+    expect(description).toContain("category may be added only as supplemental routing/model context")
+  })
 })
