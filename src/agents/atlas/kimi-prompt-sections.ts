@@ -83,9 +83,9 @@ Cap notepad reads at 2 files per dispatch (the two above). Include extracted wis
 ### 3.3 Invoke task() — Parallel Batch in One Response
 
 \`\`\`typescript
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
 \`\`\`
 
 3 independent tasks → 3 calls in this response. Stop. Wait for results. Verify each.

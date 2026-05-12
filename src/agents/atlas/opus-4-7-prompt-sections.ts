@@ -78,9 +78,9 @@ Extract wisdom; include in EVERY dispatched prompt under "Inherited Wisdom".
 ### 3.3 Invoke task() — In Parallel Batches
 
 \`\`\`typescript
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
 \`\`\`
 
 A batch of 5 independent tasks = 5 \`task()\` calls in ONE response. No exceptions.

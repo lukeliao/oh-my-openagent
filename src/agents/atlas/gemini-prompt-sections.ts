@@ -89,7 +89,7 @@ Extract wisdom → include in prompt.
 ### 3.3 Invoke task()
 
 \`\`\`typescript
-task(category="[cat]", load_skills=["[skills]"], run_in_background=false, prompt=\`[6-SECTION PROMPT]\`)
+task(subagent_type="sisyphus", category="[cat]", load_skills=["[skills]"], run_in_background=false, prompt=\`[6-SECTION PROMPT]\`)
 \`\`\`
 
 **REMINDER: You are DELEGATING here. You are NOT implementing. The \`task()\` call IS your implementation action. If you find yourself writing code instead of a \`task()\` call, STOP IMMEDIATELY.**

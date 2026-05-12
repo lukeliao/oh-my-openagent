@@ -73,9 +73,9 @@ Extract wisdom → include in EVERY dispatched prompt under "Inherited Wisdom".
 ### 3.3 Invoke task() — Fan Out in One Response
 
 \`\`\`typescript
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
-task(category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
+task(subagent_type="sisyphus", category="...", load_skills=[...], run_in_background=false, prompt="[6-SECTION PROMPT]")
 \`\`\`
 
 3 independent tasks → 3 calls in this response.
