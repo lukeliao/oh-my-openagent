@@ -453,7 +453,7 @@ describe("sisyphus-task", () => {
   })
 
   describe("category delegation config validation", () => {
-    test("fills subagent_type as sisyphus-junior when category is provided without subagent_type", async () => {
+    test("keeps subagent_type undefined when category is provided without subagent_type", async () => {
       // given
       const { createDelegateTask } = require("./tools")
 
@@ -513,10 +513,126 @@ describe("sisyphus-task", () => {
        await tool.execute(args, toolContext)
 
        // then
-       expect(args.subagent_type).toBe("Sisyphus-Junior")
+        expect(args.subagent_type).toBeUndefined()
     }, { timeout: 10000 })
 
-    test("prefers category over subagent_type when both are provided", async () => {
+    test("normalizes lowercase sisyphus-junior as Junior when category is provided (regression: tool.execute.before backfill)", async () => {
+      //#given - lowercase "sisyphus-junior" is the value injected by tool.execute.before for category-only calls
+      const { createDelegateTask } = require("./tools")
+
+      const mockManager = {
+        launch: async () => ({
+          id: "task-junior-lower",
+          status: "pending",
+          description: "Lowercase Junior test",
+          agent: "sisyphus-junior",
+          sessionID: "test-session",
+        }),
+      }
+
+      const mockClient = {
+        app: { agents: async () => ({ data: [] }) },
+        config: { get: async () => ({}) },
+        provider: { list: async () => ({ data: { connected: ["openai"] } }) },
+        model: { list: async () => ({ data: [{ provider: "openai", id: "gpt-5.3-codex" }] }) },
+        session: {
+          create: async () => ({ data: { id: "test-session" } }),
+          prompt: async () => ({ data: {} }),
+          promptAsync: async () => ({ data: {} }),
+          messages: async () => ({ data: [] }),
+          status: async () => ({ data: {} }),
+        },
+      }
+
+      const tool = createDelegateTask({
+        manager: mockManager,
+        client: mockClient,
+        connectedProvidersOverride: TEST_CONNECTED_PROVIDERS,
+        availableModelsOverride: createTestAvailableModels(),
+      })
+
+      const toolContext = {
+        sessionID: "parent-session",
+        messageID: "parent-message",
+        agent: "sisyphus",
+        abort: new AbortController().signal,
+      }
+
+      const args = {
+        description: "Lowercase Junior test",
+        prompt: "Do something",
+        category: "quick",
+        subagent_type: "sisyphus-junior",
+        run_in_background: true,
+        load_skills: [],
+      }
+
+      //#when
+      await tool.execute(args, toolContext)
+
+      //#then - lowercase Junior normalized to display name; treated as Junior, not explicit non-Junior
+      expect(args.subagent_type).toBe("Sisyphus-Junior")
+    }, { timeout: 10000 })
+
+    test("normalizes display-name Sisyphus-Junior as Junior when category is provided", async () => {
+      //#given
+      const { createDelegateTask } = require("./tools")
+
+      const mockManager = {
+        launch: async () => ({
+          id: "task-junior-display",
+          status: "pending",
+          description: "Display Junior test",
+          agent: "Sisyphus-Junior",
+          sessionID: "test-session",
+        }),
+      }
+
+      const mockClient = {
+        app: { agents: async () => ({ data: [] }) },
+        config: { get: async () => ({}) },
+        provider: { list: async () => ({ data: { connected: ["openai"] } }) },
+        model: { list: async () => ({ data: [{ provider: "openai", id: "gpt-5.3-codex" }] }) },
+        session: {
+          create: async () => ({ data: { id: "test-session" } }),
+          prompt: async () => ({ data: {} }),
+          promptAsync: async () => ({ data: {} }),
+          messages: async () => ({ data: [] }),
+          status: async () => ({ data: {} }),
+        },
+      }
+
+      const tool = createDelegateTask({
+        manager: mockManager,
+        client: mockClient,
+        connectedProvidersOverride: TEST_CONNECTED_PROVIDERS,
+        availableModelsOverride: createTestAvailableModels(),
+      })
+
+      const toolContext = {
+        sessionID: "parent-session",
+        messageID: "parent-message",
+        agent: "sisyphus",
+        abort: new AbortController().signal,
+      }
+
+      const args = {
+        description: "Display Junior test",
+        prompt: "Do something",
+        category: "quick",
+        subagent_type: "Sisyphus-Junior",
+        run_in_background: true,
+        load_skills: [],
+      }
+
+      //#when
+      await tool.execute(args, toolContext)
+
+      //#then - display-name Junior stays as Junior
+      expect(args.subagent_type).toBe("Sisyphus-Junior")
+    }, { timeout: 10000 })
+
+    test("preserves explicit subagent_type when both category and non-Junior subagent_type are provided", async () => {
       //#given
       const { createDelegateTask } = require("./tools")
 
@@ -570,8 +686,8 @@ describe("sisyphus-task", () => {
       //#when
       await tool.execute(args, toolContext)
 
-      //#then - category takes precedence, subagent_type is overridden to sisyphus-junior
-      expect(args.subagent_type).toBe("Sisyphus-Junior")
+      //#then - explicit subagent_type is preserved when non-Junior
+      expect(args.subagent_type).toBe("oracle")
     }, { timeout: 10000 })
 
     test("proceeds without error when systemDefaultModel is undefined", async () => {
@@ -621,7 +737,7 @@ describe("sisyphus-task", () => {
        
        // then proceeds without error - uses fallback chain
        expect(result).not.toContain("oh-my-opencode requires a default model")
-    }, { timeout: 10000 })
+     }, { timeout: 10000 })
 
     test("returns clear error when no model can be resolved", async () => {
       // given - custom category with no model, no systemDefaultModel, no available models
