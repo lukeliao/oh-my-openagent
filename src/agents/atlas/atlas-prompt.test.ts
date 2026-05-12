@@ -55,6 +55,22 @@ describe("Atlas prompts anti-duplication coverage", () => {
   })
 })
 
+describe("Atlas prompts local subagent governance alignment", () => {
+  test("all variants should avoid category-only task examples in local orchestration guidance", () => {
+    for (const [name, prompt] of ALL_VARIANTS) {
+      expect(prompt, `${name}: must not promote category-only quick-task examples`).not.toContain('task(category="quick"')
+      expect(prompt, `${name}: must not claim category-only delegation is the local default`).not.toContain("Option A: Category + Skills")
+    }
+  })
+
+  test("all variants should teach explicit subagent_type delegation", () => {
+    for (const [name, prompt] of ALL_VARIANTS) {
+      expect(prompt, `${name}: missing explicit subagent_type guidance`).toContain("subagent_type")
+      expect(prompt, `${name}: missing local governance wording`).toContain("Always provide subagent_type explicitly")
+    }
+  })
+})
+
 describe("Atlas prompts plan path consistency", () => {
   for (const [name, prompt] of ALL_VARIANTS) {
     test(`${name} variant should use .sisyphus/plans/{plan-name}.md path`, () => {

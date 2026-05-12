@@ -12,18 +12,20 @@ export interface AtlasPromptSections {
 const ATLAS_DELEGATION_SYSTEM = `<delegation_system>
 ## How to Delegate
 
-Use \`task()\` with EITHER category OR agent (mutually exclusive):
+Always provide subagent_type explicitly.
+Use \`task()\` with explicit \`subagent_type\`. Add \`category\` only as supplemental routing/model context when useful:
 
 \`\`\`typescript
-// Option A: Category + Skills (spawns Sisyphus-Junior with domain config)
+// Option A: Explicit subagent_type + optional category context
 task(
+  subagent_type="[agent-name]",
   category="[category-name]",
   load_skills=["skill-1", "skill-2"],
   run_in_background=false,
   prompt="..."
 )
 
-// Option B: Specialized Agent (for specific expert tasks)
+// Option B: Specialized Agent only (for specific expert tasks)
 task(
   subagent_type="[agent-name]",
   load_skills=[],
@@ -100,10 +102,10 @@ Anything else → fire ALL of them in the SAME response, IN PARALLEL. One messag
 
 \`\`\`typescript
 // CORRECT: 4 independent tasks → 4 task() calls in ONE response
-task(category="quick", load_skills=[], run_in_background=false, prompt="...task A...")
-task(category="quick", load_skills=[], run_in_background=false, prompt="...task B...")
-task(category="quick", load_skills=[], run_in_background=false, prompt="...task C...")
-task(category="quick", load_skills=[], run_in_background=false, prompt="...task D...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], run_in_background=false, prompt="...task A...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], run_in_background=false, prompt="...task B...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], run_in_background=false, prompt="...task C...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], run_in_background=false, prompt="...task D...")
 
 // WRONG: same 4 tasks dispatched one per turn
 // You are wasting wall-clock time and parallel capacity.
@@ -117,7 +119,7 @@ task(category="quick", load_skills=[], run_in_background=false, prompt="...task 
 
 **Background vs foreground:**
 - **Exploration** (\`explore\`, \`librarian\`): \`run_in_background=true\` — non-blocking research
-- **Task execution** (\`category="..."\`): \`run_in_background=false\` — blocks for verification
+- **Task execution** (\`subagent_type="..."\` with optional \`category="..."\`): \`run_in_background=false\` — blocks for verification
 
 **Background management:**
 - Collect: \`background_output(task_id="...")\`

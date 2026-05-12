@@ -39,14 +39,14 @@ export function buildCategorySection(userCategories?: Record<string, CategoryCon
     return `- **\`${name}\`** (${temp}): ${desc}`
   })
 
-  return `##### Option A: Use CATEGORY (for domain-specific work)
+  return `##### Option A: Use explicit subagent_type with optional category context (for domain-specific work)
 
-Categories spawn \`Sisyphus-Junior-{category}\` with optimized settings:
+Categories express domain/model intent. In this workspace, do NOT rely on category-only dispatch:
 
 ${categoryRows.join("\n")}
 
 \`\`\`typescript
-task(category="[category-name]", load_skills=[...], run_in_background=false, prompt="...")
+task(subagent_type="sisyphus", category="[category-name]", load_skills=[...], run_in_background=false, prompt="...")
 \`\`\``
 }
 
@@ -61,7 +61,7 @@ export function buildSkillsSection(skills: AvailableSkill[]): string {
   return `
 #### 3.2.2: Skill Selection (PREPEND TO PROMPT)
 
-**Use the \`Category + Skills Delegation System\` section below as the single source of truth for skill details.**
+**Use the \`Subagent + Category Context + Skills Delegation System\` section below as the single source of truth for skill details.**
 - Built-in skills available: ${builtinSkills.length}
 - User-installed skills available: ${customSkills.length}
 
@@ -73,7 +73,7 @@ Read each skill's description in the section below and ask: "Does this skill's d
 
 **Usage:**
 \`\`\`typescript
-task(category="[category]", load_skills=["skill-1", "skill-2"], run_in_background=false, prompt="...")
+task(subagent_type="sisyphus", category="[category]", load_skills=["skill-1", "skill-2"], run_in_background=false, prompt="...")
 \`\`\`
 
 **IMPORTANT:**
@@ -87,7 +87,7 @@ export function buildDecisionMatrix(agents: AvailableAgent[], userCategories?: R
 
   const categoryRows = Object.entries(allCategories).map(([name]) => {
     const desc = getCategoryDescription(name, userCategories)
-    return `- **${desc}**: \`category="${name}", load_skills=[...]\``
+    return `- **${desc}**: \`subagent_type="sisyphus", category="${name}", load_skills=[...]\``
   })
 
    const agentRows = agents.map((a) => {
@@ -100,5 +100,5 @@ export function buildDecisionMatrix(agents: AvailableAgent[], userCategories?: R
 ${categoryRows.join("\n")}
 ${agentRows.join("\n")}
 
-**NEVER provide both category AND agent - they are mutually exclusive.**`
+**Always provide subagent_type explicitly. category is supplemental routing/model context only.**`
 }
