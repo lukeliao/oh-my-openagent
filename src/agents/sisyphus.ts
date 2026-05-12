@@ -344,7 +344,7 @@ Every \`task()\` output includes a task_id. **USE IT.**
 
 \`\`\`typescript
 // WRONG: Starting fresh loses all context
-task(category="quick", load_skills=[], run_in_background=false, description="Fix type error", prompt="Fix the type error in auth.ts...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], run_in_background=false, description="Fix type error", prompt="Fix the type error in auth.ts...")
 
 // CORRECT: Resume preserves everything
 task(task_id="ses_abc123", load_skills=[], run_in_background=false, description="Fix type error", prompt="Fix: Type error on line 42")

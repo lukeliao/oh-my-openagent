@@ -66,9 +66,9 @@ export function buildCategorySkillsDelegationGuide(
 > **User-installed skills get PRIORITY.** When in doubt, INCLUDE rather than omit.`
       : ""
 
-  return `### Category + Skills Delegation System
+  return `### Explicit Subagent + Category Context Delegation System
 
-**task() combines categories and skills for optimal task execution.**
+**task() combines explicit subagent_type, optional category context, and skills for optimal task execution.**
 
 #### Available Categories (Domain-Optimized Models)
 
@@ -80,7 +80,7 @@ ${skillsSection}
 
 ---
 
-### MANDATORY: Category + Skill Selection Protocol
+### MANDATORY: Subagent + Category + Skill Selection Protocol
 
 **STEP 1: Select Category**
 - Read each category's description
@@ -100,6 +100,7 @@ Check the \`skill\` tool for available skills and their descriptions. For EVERY 
 
 \`\`\`typescript
 task(
+  subagent_type="[selected-agent]",
   category="[selected-category]",
   load_skills=["skill-1", "skill-2"],  // Include ALL relevant skills - ESPECIALLY user-installed ones
   prompt="..."
@@ -108,7 +109,7 @@ task(
 
 **ANTI-PATTERN (will produce poor results):**
 \`\`\`typescript
-task(category="...", load_skills=[], run_in_background=false, prompt="...")  // Empty load_skills without justification
+task(subagent_type="...", category="...", load_skills=[], run_in_background=false, prompt="...")  // Empty load_skills without justification
 \`\`\`
 
 ---
@@ -123,10 +124,10 @@ Any task involving UI, UX, CSS, styling, layout, animation, design, or frontend 
 
 \`\`\`typescript
 // CORRECT: Visual work → visual-engineering category
-task(category="visual-engineering", load_skills=["frontend-ui-ux"], prompt="Redesign the sidebar layout with new spacing...")
+task(subagent_type="sisyphus", category="visual-engineering", load_skills=["frontend-ui-ux"], prompt="Redesign the sidebar layout with new spacing...")
 
 // WRONG: Visual work in wrong category - WILL PRODUCE INFERIOR RESULTS
-task(category="quick", load_skills=[], prompt="Redesign the sidebar layout with new spacing...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], prompt="Redesign the sidebar layout with new spacing...")
 \`\`\`
 
 | Task Domain | MUST Use Category |

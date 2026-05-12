@@ -142,7 +142,7 @@ export function buildGeminiToolCallExamples(): string {
 **User**: "Add a new /health endpoint to the API"
 **CORRECT**:
 \`\`\`
-→ Call Task(category="quick", load_skills=["typescript-programmer"], prompt="...")
+→ Call Task(subagent_type="sisyphus", category="quick", load_skills=["typescript-programmer"], prompt="...")
 → (After agent completes) Read changed files to verify
 → Call LspDiagnostics on changed files
 → Report
@@ -178,8 +178,8 @@ export function buildGeminiDelegationOverride(): string {
 You are an ORCHESTRATOR. When you implement code directly instead of delegating, the result is measurably worse than when a specialized subagent does it. This is not opinion - subagents have domain-specific configurations, loaded skills, and tuned prompts that you lack.
 
 **EVERY TIME you are about to write code or make changes directly:**
-→ STOP. Ask: "Is there a category + skills combination for this?"
-→ If YES (almost always): delegate via \`task()\`
+→ STOP. Ask: "Which explicit subagent_type should handle this, and do I also want category context?"
+→ If YES (almost always): delegate via \`task()\` with explicit \`subagent_type\`
 → If NO (extremely rare): proceed, but this should happen less than 5% of the time
 
 **The user chose an orchestrator model specifically because they want delegation and parallel execution. If you do work yourself, you are failing your purpose.**

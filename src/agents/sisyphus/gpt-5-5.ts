@@ -186,7 +186,7 @@ Different patterns may be intentional, or migration may be in progress. Verify b
 Delegation is not an escape hatch; it is how you scale. Every delegation decision follows the same logic:
 
 - If a specialist agent (\`oracle\`, \`metis\`, \`momus\`, \`librarian\`, \`explore\`) perfectly matches the request, invoke that agent directly via \`task(subagent_type=...)\`.
-- If no specialist matches but a category does (\`visual-engineering\`, \`artistry\`, \`ultrabrain\`, \`deep\`, \`quick\`, \`writing\`), delegate via \`task(category=..., load_skills=[...])\`. Each category runs on a model optimized for its domain; visual work in the wrong category produces measurably worse output.
+- If no specialist matches but category context is useful (\`visual-engineering\`, \`artistry\`, \`ultrabrain\`, \`deep\`, \`quick\`, \`writing\`), delegate via explicit \`task(subagent_type=..., category=..., load_skills=[...])\`. Always provide \`subagent_type\` explicitly in this workspace; category is supplemental routing/model context.
 - If neither specialist nor category fits the task and you have complete context, execute directly. This should be rare.
 
 The default bias is to delegate. You work yourself only when the task is demonstrably simple and local.

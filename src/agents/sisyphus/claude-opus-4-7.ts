@@ -239,7 +239,7 @@ If ANY condition fails → research/clarification ONLY, then end response and wa
 **Delegation Check** (mandatory before acting directly on non-trivial tasks):
 
 1. Specialized agent matches? → use it.
-2. Category fits (visual-engineering, ultrabrain, quick, etc.)? → delegate via \`task(category=..., load_skills=[...])\`. Skills CHEAP to load, COSTLY to omit.
+2. Category context fits (visual-engineering, ultrabrain, quick, etc.)? → delegate via explicit \`task(subagent_type=..., category=..., load_skills=[...])\`. Skills CHEAP to load, COSTLY to omit.
 3. Self only if NO category/specialist fits AND task is demonstrably simple/local.
 
 **DEFAULT BIAS: DELEGATE.**
@@ -353,7 +353,7 @@ Use \`task_id\` for: failed/incomplete work, follow-up questions, multi-turn ref
 
 \`\`\`typescript
 // WRONG: starting fresh loses everything
-task(category="quick", load_skills=[], prompt="Fix the type error in auth.ts...")
+task(subagent_type="sisyphus", category="quick", load_skills=[], prompt="Fix the type error in auth.ts...")
 
 // RIGHT: resume preserves full context
 task(task_id="ses_abc123", load_skills=[], prompt="Fix: Type error on line 42")
