@@ -513,7 +513,7 @@ describe("sisyphus-task", () => {
        await tool.execute(args, toolContext)
 
        // then
-        expect(args.subagent_type).toBeUndefined()
+        expect(args.subagent_type).toBe("Sisyphus-Junior")
     }, { timeout: 10000 })
 
     test("normalizes lowercase sisyphus-junior as Junior when category is provided (regression: tool.execute.before backfill)", async () => {
