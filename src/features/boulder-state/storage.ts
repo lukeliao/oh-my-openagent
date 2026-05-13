@@ -14,6 +14,7 @@ import type {
   BoulderWorkStatus,
   PlanProgress,
   TaskSessionState,
+  WorkStopDetail,
 } from "./types"
 import { BOULDER_DIR, BOULDER_FILE, PROMETHEUS_PLANS_DIR } from "./constants"
 
@@ -43,7 +44,15 @@ function getElapsedMs(startedAt: string | undefined, endedAt: string | undefined
 }
 
 function isValidWorkStatus(status: unknown): status is BoulderWorkStatus {
-  return status === "active" || status === "completed" || status === "paused" || status === "abandoned"
+  return (
+    status === "active"
+    || status === "completed"
+    || status === "paused_by_user"
+    || status === "retrying_provider"
+    || status === "provider_exhausted"
+    || status === "paused"
+    || status === "abandoned"
+  )
 }
 
 function buildWorkFromMirror(state: BoulderState): BoulderWorkState {
@@ -63,6 +72,7 @@ function buildWorkFromMirror(state: BoulderState): BoulderWorkState {
     agent: state.agent,
     worktree_path: state.worktree_path,
     task_sessions: state.task_sessions,
+    stop_detail: state.stop_detail,
   }
 }
 
@@ -79,6 +89,7 @@ function projectWorkToMirror(state: BoulderState, work: BoulderWorkState): void 
   state.agent = work.agent
   state.worktree_path = work.worktree_path
   state.task_sessions = work.task_sessions ? { ...work.task_sessions } : {}
+  state.stop_detail = work.stop_detail
 }
 
 function selectMirrorWork(state: BoulderState): BoulderWorkState | null {
@@ -213,6 +224,7 @@ export function writeBoulderState(directory: string, state: BoulderState): boole
           agent: stateToWrite.agent,
           worktree_path: stateToWrite.worktree_path,
           task_sessions: stateToWrite.task_sessions ? { ...stateToWrite.task_sessions } : {},
+          stop_detail: stateToWrite.stop_detail,
         }
         stateToWrite.works = {
           ...stateToWrite.works,
@@ -973,5 +985,83 @@ export function completeBoulder(directory: string, workId?: string, endedAt?: st
     return null
   }
 
+  return state
+}
+
+// ─── Unified stop state helpers ───────────────────────────────────────────
+
+export function isWorkPaused(status: BoulderWorkStatus): boolean {
+  return status === "paused_by_user" || status === "paused"
+}
+
+export function isProviderExhausted(status: BoulderWorkStatus): boolean {
+  return status === "provider_exhausted"
+}
+
+export function isWorkStoppedOrExhausted(status: BoulderWorkStatus): boolean {
+  return isWorkPaused(status) || isProviderExhausted(status) || status === "retrying_provider"
+}
+
+export function readWorkStopDetail(directory: string): WorkStopDetail | null {
+  const state = readBoulderState(directory)
+  if (!state) return null
+  return state.stop_detail ?? null
+}
+
+export function pauseWork(
+  directory: string,
+  reason: "paused_by_user" | "provider_exhausted",
+  detail?: Partial<Omit<WorkStopDetail, "reason" | "stopped_at">>,
+): BoulderState | null {
+  const state = readBoulderState(directory)
+  if (!state) return null
+
+  const stoppedAt = nowIsoString()
+  const stopDetail: WorkStopDetail = {
+    reason,
+    stopped_at: stoppedAt,
+    ...(detail?.exhausted_provider !== undefined ? { exhausted_provider: detail.exhausted_provider } : {}),
+    ...(detail?.retry_attempts !== undefined ? { retry_attempts: detail.retry_attempts } : {}),
+    ...(detail?.retry_elapsed_ms !== undefined ? { retry_elapsed_ms: detail.retry_elapsed_ms } : {}),
+    ...(detail?.last_error !== undefined ? { last_error: detail.last_error } : {}),
+  }
+
+  state.status = reason
+  state.stop_detail = stopDetail
+  state.updated_at = stoppedAt
+
+  // Propagate to the active work entry when using multi-work schema
+  if (state.works && state.active_work_id) {
+    const work = state.works[state.active_work_id]
+    if (work) {
+      work.status = reason
+      work.stop_detail = stopDetail
+      work.updated_at = stoppedAt
+    }
+  }
+
+  if (!writeBoulderState(directory, state)) return null
+  return state
+}
+
+export function resumeWork(directory: string): BoulderState | null {
+  const state = readBoulderState(directory)
+  if (!state) return null
+
+  state.status = "active"
+  delete state.stop_detail
+  state.updated_at = nowIsoString()
+
+  // Propagate to the active work entry
+  if (state.works && state.active_work_id) {
+    const work = state.works[state.active_work_id]
+    if (work) {
+      work.status = "active"
+      delete work.stop_detail
+      work.updated_at = nowIsoString()
+    }
+  }
+
+  if (!writeBoulderState(directory, state)) return null
   return state
 }

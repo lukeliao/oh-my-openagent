@@ -28,6 +28,12 @@ import {
   startTaskTimer,
   upsertTaskSessionState,
   upsertTaskSessionStateForWork,
+  pauseWork,
+  resumeWork,
+  readWorkStopDetail,
+  isWorkPaused,
+  isProviderExhausted,
+  isWorkStoppedOrExhausted,
 } from "./storage"
 import type { BoulderState } from "./types"
 import { readCurrentTopLevelTask } from "./top-level-task"
@@ -1078,6 +1084,294 @@ describe("boulder-state", () => {
 
       // then
       expect(resolvedPath).toBe(planPath)
+    })
+  })
+
+  describe("unified stop state", () => {
+    const stopPlanPath = join(SISYPHUS_DIR, "plans", "stop-test-plan.md")
+
+    beforeEach(() => {
+      mkdirSync(dirname(stopPlanPath), { recursive: true })
+      writeFileSync(stopPlanPath, "# Stop Test\n- [ ] Task 1")
+      clearBoulderState(TEST_DIR)
+    })
+
+    describe("pauseWork", () => {
+      test("should mark work as paused_by_user with stop_detail", () => {
+        // given - active boulder work
+        const state = createBoulderState(stopPlanPath, "session-1", "sisyphus")
+        expect(writeBoulderState(TEST_DIR, state)).toBe(true)
+
+        // when - user pauses work
+        const paused = pauseWork(TEST_DIR, "paused_by_user")
+
+        // then
+        expect(paused).not.toBeNull()
+        expect(paused!.status).toBe("paused_by_user")
+        expect(paused!.stop_detail).toBeDefined()
+        expect(paused!.stop_detail!.reason).toBe("paused_by_user")
+        expect(paused!.stop_detail!.stopped_at).toBeDefined()
+      })
+
+      test("should mark work as provider_exhausted with retry detail", () => {
+        // given - active boulder work
+        const state = createBoulderState(stopPlanPath, "session-1", "sisyphus")
+        expect(writeBoulderState(TEST_DIR, state)).toBe(true)
+
+        // when - provider retries exhausted
+        const paused = pauseWork(TEST_DIR, "provider_exhausted", {
+          exhausted_provider: "openai_taobao",
+          retry_attempts: 5,
+          retry_elapsed_ms: 30000,
+          last_error: "rate_limit",
+        })
+
+        // then
+        expect(paused).not.toBeNull()
+        expect(paused!.status).toBe("provider_exhausted")
+        expect(paused!.stop_detail).toBeDefined()
+        expect(paused!.stop_detail!.exhausted_provider).toBe("openai_taobao")
+        expect(paused!.stop_detail!.retry_attempts).toBe(5)
+        expect(paused!.stop_detail!.retry_elapsed_ms).toBe(30000)
+        expect(paused!.stop_detail!.last_error).toBe("rate_limit")
+      })
+
+      test("should return null when no boulder state exists", () => {
+        // given - no boulder state
+        // when
+        const result = pauseWork(TEST_DIR, "paused_by_user")
+        // then
+        expect(result).toBeNull()
+      })
+    })
+
+    describe("resumeWork", () => {
+      test("should clear paused state back to active", () => {
+        // given - paused work
+        createBoulderState(stopPlanPath, "session-1", "sisyphus")
+        writeBoulderState(TEST_DIR, createBoulderState(stopPlanPath, "session-1"))
+        const paused = pauseWork(TEST_DIR, "paused_by_user")
+        expect(paused?.status).toBe("paused_by_user")
+        expect(paused?.stop_detail).toBeDefined()
+
+        // when - work is resumed
+        const resumed = resumeWork(TEST_DIR)
+
+        // then
+        expect(resumed).not.toBeNull()
+        expect(resumed!.status).toBe("active")
+        expect(resumed!.stop_detail).toBeUndefined()
+      })
+
+      test("should return null when no boulder state exists", () => {
+        // given - no boulder state
+        // when
+        const result = resumeWork(TEST_DIR)
+        // then
+        expect(result).toBeNull()
+      })
+    })
+
+    describe("isWorkPaused", () => {
+      test("should return true for paused_by_user", () => {
+        expect(isWorkPaused("paused_by_user")).toBe(true)
+      })
+
+      test("should return true for legacy paused", () => {
+        expect(isWorkPaused("paused")).toBe(true)
+      })
+
+      test("should return false for active", () => {
+        expect(isWorkPaused("active")).toBe(false)
+      })
+
+      test("should return false for completed", () => {
+        expect(isWorkPaused("completed")).toBe(false)
+      })
+
+      test("should return false for retrying_provider", () => {
+        expect(isWorkPaused("retrying_provider")).toBe(false)
+      })
+
+      test("should return false for provider_exhausted", () => {
+        expect(isWorkPaused("provider_exhausted")).toBe(false)
+      })
+    })
+
+    describe("isProviderExhausted", () => {
+      test("should return true for provider_exhausted", () => {
+        expect(isProviderExhausted("provider_exhausted")).toBe(true)
+      })
+
+      test("should return false for paused_by_user", () => {
+        expect(isProviderExhausted("paused_by_user")).toBe(false)
+      })
+
+      test("should return false for active", () => {
+        expect(isProviderExhausted("active")).toBe(false)
+      })
+    })
+
+    describe("isWorkStoppedOrExhausted", () => {
+      test("should return true for paused_by_user", () => {
+        expect(isWorkStoppedOrExhausted("paused_by_user")).toBe(true)
+      })
+
+      test("should return true for paused", () => {
+        expect(isWorkStoppedOrExhausted("paused")).toBe(true)
+      })
+
+      test("should return true for provider_exhausted", () => {
+        expect(isWorkStoppedOrExhausted("provider_exhausted")).toBe(true)
+      })
+
+      test("should return true for retrying_provider", () => {
+        expect(isWorkStoppedOrExhausted("retrying_provider")).toBe(true)
+      })
+
+      test("should return false for active", () => {
+        expect(isWorkStoppedOrExhausted("active")).toBe(false)
+      })
+
+      test("should return false for completed", () => {
+        expect(isWorkStoppedOrExhausted("completed")).toBe(false)
+      })
+    })
+
+    describe("readWorkStopDetail", () => {
+      test("should read stop_detail from boulder state", () => {
+        // given
+        createBoulderState(stopPlanPath, "session-1", "sisyphus")
+        writeBoulderState(TEST_DIR, createBoulderState(stopPlanPath, "session-1"))
+        pauseWork(TEST_DIR, "paused_by_user")
+
+        // when
+        const detail = readWorkStopDetail(TEST_DIR)
+
+        // then
+        expect(detail).not.toBeNull()
+        expect(detail!.reason).toBe("paused_by_user")
+        expect(detail!.stopped_at).toBeDefined()
+      })
+
+      test("should return null when no boulder state exists", () => {
+        // given - no boulder state
+        // when
+        const detail = readWorkStopDetail(TEST_DIR)
+        // then
+        expect(detail).toBeNull()
+      })
+
+      test("should return null when work is active (no stop_detail)", () => {
+        // given - active work with no stop_detail
+        createBoulderState(stopPlanPath, "session-1", "sisyphus")
+        writeBoulderState(TEST_DIR, createBoulderState(stopPlanPath, "session-1"))
+
+        // when
+        const detail = readWorkStopDetail(TEST_DIR)
+
+        // then
+        expect(detail).toBeNull()
+      })
+    })
+  })
+
+  describe("stop state survives lineage extension", () => {
+    const lineagePlanPath = join(SISYPHUS_DIR, "plans", "lineage-plan.md")
+
+    beforeEach(() => {
+      mkdirSync(dirname(lineagePlanPath), { recursive: true })
+      writeFileSync(lineagePlanPath, "# Lineage Plan\n- [ ] Task 1\n- [ ] Task 2")
+    })
+
+    test("should persist stop state across appended sessions for the same active work", () => {
+      // given - active work started in session-1
+      const state = createBoulderState(lineagePlanPath, "session-1", "sisyphus")
+      expect(writeBoulderState(TEST_DIR, state)).toBe(true)
+
+      // when - user pauses work
+      pauseWork(TEST_DIR, "paused_by_user")
+      expect(readWorkStopDetail(TEST_DIR)?.reason).toBe("paused_by_user")
+
+      // when - a new appended session (session-2) joins the lineage
+      const workId = readBoulderState(TEST_DIR)?.active_work_id
+      expect(workId).toBeDefined()
+      appendSessionIdForWork(TEST_DIR, workId!, "session-2", "appended")
+
+      // then - stop state must still be visible to the appended session
+      const afterAppend = readBoulderState(TEST_DIR)
+      expect(afterAppend).not.toBeNull()
+      expect(afterAppend!.status).toBe("paused_by_user")
+      expect(afterAppend!.stop_detail?.reason).toBe("paused_by_user")
+
+      // when - read from the perspective of session-2 (no in-memory state)
+      const detail = readWorkStopDetail(TEST_DIR)
+      expect(detail?.reason).toBe("paused_by_user")
+    })
+
+    test("should persist stop state across resume cycle for the same active work", () => {
+      // given - active work paused
+      createBoulderState(lineagePlanPath, "session-1", "sisyphus")
+      writeBoulderState(TEST_DIR, createBoulderState(lineagePlanPath, "session-1"))
+      pauseWork(TEST_DIR, "paused_by_user")
+
+      // when - work is explicitly resumed
+      resumeWork(TEST_DIR)
+      expect(readBoulderState(TEST_DIR)?.status).toBe("active")
+
+      // when - work is paused again
+      pauseWork(TEST_DIR, "paused_by_user")
+
+      // then - stop state should be present again after re-pause
+      expect(readBoulderState(TEST_DIR)?.status).toBe("paused_by_user")
+      expect(readWorkStopDetail(TEST_DIR)?.reason).toBe("paused_by_user")
+    })
+
+    test("should preserve provider exhaustion detail across appended sessions", () => {
+      // given - active work started
+      createBoulderState(lineagePlanPath, "session-1", "sisyphus")
+      writeBoulderState(TEST_DIR, createBoulderState(lineagePlanPath, "session-1"))
+
+      // when - provider exhausted with detailed info
+      pauseWork(TEST_DIR, "provider_exhausted", {
+        exhausted_provider: "openai_taobao",
+        retry_attempts: 3,
+        retry_elapsed_ms: 45000,
+        last_error: "connection_timeout",
+      })
+
+      // when - an appended session joins
+      const workId = readBoulderState(TEST_DIR)?.active_work_id
+      appendSessionIdForWork(TEST_DIR, workId!, "session-2", "appended")
+
+      // then - exhaustion detail is intact for the appended session
+      const detail = readWorkStopDetail(TEST_DIR)
+      expect(detail?.reason).toBe("provider_exhausted")
+      expect(detail?.exhausted_provider).toBe("openai_taobao")
+      expect(detail?.retry_attempts).toBe(3)
+      expect(detail?.retry_elapsed_ms).toBe(45000)
+      expect(detail?.last_error).toBe("connection_timeout")
+    })
+
+    test("should survive write/read round-trip of boulder state", () => {
+      // given - work paused with full detail
+      createBoulderState(lineagePlanPath, "session-1", "sisyphus")
+      writeBoulderState(TEST_DIR, createBoulderState(lineagePlanPath, "session-1"))
+      pauseWork(TEST_DIR, "provider_exhausted", {
+        exhausted_provider: "openai_taobao",
+        retry_attempts: 6,
+      })
+
+      // when - round-trip: read → write → read
+      const read1 = readBoulderState(TEST_DIR)
+      expect(read1).not.toBeNull()
+      writeBoulderState(TEST_DIR, read1!)
+      const read2 = readBoulderState(TEST_DIR)
+
+      // then - stop_detail survives round-trip
+      expect(read2?.status).toBe("provider_exhausted")
+      expect(read2?.stop_detail?.exhausted_provider).toBe("openai_taobao")
+      expect(read2?.stop_detail?.retry_attempts).toBe(6)
     })
   })
 })

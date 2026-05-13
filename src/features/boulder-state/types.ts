@@ -19,7 +19,7 @@ export interface BoulderState {
   updated_at?: string
   /** Session IDs that have worked on this plan */
   session_ids: string[]
-  session_origins?: Record<string, "direct" | "appended">
+  session_origins?: Record<string, BoulderSessionOrigin>
   /** Plan name derived from filename */
   plan_name: string
   /** Agent type to use when resuming (e.g., 'atlas') */
@@ -28,10 +28,40 @@ export interface BoulderState {
   worktree_path?: string
   /** Preferred reusable subagent sessions keyed by current top-level plan task */
   task_sessions?: Record<string, TaskSessionState>
+  /** Fine-grained stop/recovery detail set when status transitions to
+   *  paused_by_user, retrying_provider, or provider_exhausted. */
+  stop_detail?: WorkStopDetail
 }
 
+/**
+ * Unified work status that drives both continuation stop semantics
+ * and provider terminal-failure behavior.
+ *
+ * - `active`             — work is running, continuation may auto-progress.
+ * - `completed`          — work is finished, no further continuation.
+ * - `paused_by_user`     — user explicitly issued /stop-continuation;
+ *                           continuation engines must halt until explicit resume.
+ * - `retrying_provider`  — work is active but currently waiting for a paced
+ *                           provider retry; continuation engines should not
+ *                           inject new prompts during backoff.
+ * - `provider_exhausted` — provider retry budget consumed; work cannot
+ *                           auto-continue until explicit user action.
+ * - `paused`             — legacy alias for `paused_by_user`. Kept for
+ *                           backward-compatible reads. New writes SHOULD
+ *                           use `paused_by_user` instead.
+ * - `abandoned`          — work has been explicitly abandoned.
+ */
+export type BoulderWorkStatus =
+  | "active"
+  | "completed"
+  | "paused_by_user"
+  | "retrying_provider"
+  | "provider_exhausted"
+  | "paused"
+  | "abandoned"
+
 export type BoulderSessionOrigin = "direct" | "appended"
-export type BoulderWorkStatus = "active" | "completed" | "paused" | "abandoned"
+
 export type BoulderTaskStatus = "running" | "completed" | "cancelled"
 
 export interface BoulderWorkState {
@@ -48,6 +78,7 @@ export interface BoulderWorkState {
   agent?: string
   worktree_path?: string
   task_sessions?: Record<string, TaskSessionState>
+  stop_detail?: WorkStopDetail
 }
 
 export interface PlanProgress {
@@ -57,6 +88,21 @@ export interface PlanProgress {
   completed: number
   /** Whether all tasks are done */
   isComplete: boolean
+}
+
+export interface WorkStopDetail {
+  /** Why the work stopped / entered a paused/exhausted state */
+  reason: BoulderWorkStatus
+  /** ISO timestamp when the stop was initiated */
+  stopped_at: string
+  /** For provider_exhausted: provider that failed (e.g. "openai_taobao") */
+  exhausted_provider?: string
+  /** For provider_exhausted: how many retry attempts were made */
+  retry_attempts?: number
+  /** For provider_exhausted: total retry elapsed duration in ms */
+  retry_elapsed_ms?: number
+  /** For provider_exhausted: last meaningful error classification */
+  last_error?: string
 }
 
 export interface TaskSessionState {
