@@ -11,6 +11,7 @@ import {
   createBoulderState,
   getBoulderFilePath,
   getWorkByPlanName,
+  pauseWork,
   readBoulderState,
   writeBoulderState,
 } from "../../features/boulder-state"
@@ -104,6 +105,44 @@ describe("buildStartWorkContextInfo", () => {
     expect(contextInfo).toContain("RESUMING existing work")
     expect(contextInfo).toContain("single-active-plan")
     expect(contextInfo).not.toContain("Use the Question tool")
+    expect(clearSpy).toHaveBeenCalledTimes(0)
+  })
+
+  test("includes paused_by_user work in multiple resumable work selection", () => {
+    // given
+    const clearSpy = spyOn(boulderState, "clearBoulderState")
+    const planAPath = writePlan("active-plan", "## TODOs\n- [ ] 1. Active")
+    const planBPath = writePlan("paused-plan", "## TODOs\n- [ ] 1. Paused")
+    const initialState = createBoulderState(planAPath, "session-a", "atlas", "/tmp/worktree-a")
+    writeBoulderState(testDirectory, initialState)
+    addBoulderWork(testDirectory, {
+      planPath: planBPath,
+      sessionId: "session-b",
+      agent: "atlas",
+      worktreePath: "/tmp/worktree-b",
+    })
+    const pausedWork = getWorkByPlanName(testDirectory, "paused-plan", { worktreePath: "/tmp/worktree-b" })
+    expect(pausedWork).not.toBeNull()
+    const selectedState = boulderState.selectActiveWork(testDirectory, pausedWork!.work_id)
+    expect(selectedState).not.toBeNull()
+    pauseWork(testDirectory, "paused_by_user")
+
+    // when
+    const contextInfo = buildStartWorkContextInfo({
+      ctx: createPluginInput(),
+      explicitPlanName: null,
+      existingState: readExistingState(),
+      sessionId: "session-current",
+      timestamp: "2026-05-11T00:00:00.000Z",
+      activeAgent: "atlas",
+      worktreePath: undefined,
+      worktreeBlock: "",
+    })
+
+    // then
+    expect(contextInfo).toContain("active-plan")
+    expect(contextInfo).toContain("paused-plan")
+    expect(contextInfo).toContain("Use the Question tool")
     expect(clearSpy).toHaveBeenCalledTimes(0)
   })
 

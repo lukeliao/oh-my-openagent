@@ -1,10 +1,38 @@
-const { afterEach, describe, expect, test } = require("bun:test")
+const { afterEach, beforeEach, describe, expect, mock, test } = require("bun:test")
+const { existsSync, mkdirSync, rmSync } = require("node:fs")
+const { tmpdir } = require("node:os")
+const { join } = require("node:path")
+const { randomUUID } = require("node:crypto")
 const { createToolExecuteBeforeHandler } = require("./tool-execute-before")
 const { createToolRegistry } = require("./tool-registry")
 const { builtinTools } = require("../tools")
 const { resetStorageClient } = require("../tools/session-manager/storage")
+const {
+  appendSessionIdForWork,
+  createBoulderState,
+  getWorkByPlanName,
+  pauseWork,
+  readBoulderState,
+  resumeWork,
+  writeBoulderState,
+} = require("../features/boulder-state")
 
 describe("createToolExecuteBeforeHandler", () => {
+  let testDirectory = ""
+
+  beforeEach(() => {
+    testDirectory = join(tmpdir(), `tool-execute-before-${randomUUID()}`)
+    if (!existsSync(testDirectory)) {
+      mkdirSync(testDirectory, { recursive: true })
+    }
+  })
+
+  afterEach(() => {
+    if (testDirectory && existsSync(testDirectory)) {
+      rmSync(testDirectory, { recursive: true, force: true })
+    }
+  })
+
   test("does not execute subagent question blocker hook for question tool", async () => {
     //#given
     const ctx = {
@@ -165,7 +193,7 @@ describe("createToolExecuteBeforeHandler", () => {
       expect(output.args.subagent_type).toBe("plan")
     })
 
-    test("sets subagent_type to sisyphus-junior when category provided with different subagent_type", async () => {
+    test("preserves explicit subagent_type when category is also provided", async () => {
       //#given
       const ctx = createCtxWithSessionMessages()
       const handler = createToolExecuteBeforeHandler({ ctx, hooks: emptyHooks })
@@ -176,7 +204,7 @@ describe("createToolExecuteBeforeHandler", () => {
       await handler(input, output)
 
       //#then
-      expect(output.args.subagent_type).toBe("sisyphus-junior")
+      expect(output.args.subagent_type).toBe("oracle")
     })
 
     test("resolves subagent_type from session first message when task_id is provided without subagent_type", async () => {
@@ -271,6 +299,98 @@ describe("createToolExecuteBeforeHandler", () => {
 
       //#then
       expect(output.args.subagent_type).toBe("oracle")
+    })
+  })
+
+  describe("stop-continuation boulder pause semantics", () => {
+    test("pauses active work instead of deleting boulder state", async () => {
+      // given
+      const state = createBoulderState(join(testDirectory, ".sisyphus", "plans", "plan-a.md"), "ses_parent", "atlas")
+      writeBoulderState(testDirectory, state)
+      const cancelAllCountdowns = mock(() => {})
+      const cancelLoop = mock(() => {})
+      const stop = mock(() => {})
+      const handler = createToolExecuteBeforeHandler({
+        ctx: { directory: testDirectory, client: { session: { messages: async () => ({ data: [] }) } } },
+        hooks: {
+          stopContinuationGuard: { stop, isStopped: () => false, clear: () => {} },
+          todoContinuationEnforcer: { cancelAllCountdowns },
+          ralphLoop: { cancelLoop },
+        },
+      })
+
+      // when
+      await handler(
+        { tool: "skill", sessionID: "ses_parent", callID: "call-stop" },
+        { args: { name: "/stop-continuation" } },
+      )
+
+      // then
+      expect(stop).toHaveBeenCalledWith("ses_parent")
+      expect(cancelAllCountdowns).toHaveBeenCalledTimes(1)
+      expect(cancelLoop).toHaveBeenCalledWith("ses_parent")
+      expect(readBoulderState(testDirectory)?.status).toBe("paused_by_user")
+      expect(readBoulderState(testDirectory)?.active_work_id).toBeTruthy()
+    })
+
+    test("resumes paused work on explicit /start-work without reconstructing lineage", async () => {
+      // given
+      const state = createBoulderState(join(testDirectory, ".sisyphus", "plans", "plan-b.md"), "ses_parent", "atlas")
+      writeBoulderState(testDirectory, state)
+      const work = getWorkByPlanName(testDirectory, "plan-b")
+      expect(work).not.toBeNull()
+      appendSessionIdForWork(testDirectory, work.work_id, "ses_child", "appended")
+      pauseWork(testDirectory, "paused_by_user")
+
+      const clear = mock(() => {})
+      const handler = createToolExecuteBeforeHandler({
+        ctx: { directory: testDirectory, client: { session: { messages: async () => ({ data: [] }) } } },
+        hooks: {
+          stopContinuationGuard: { stop: () => {}, isStopped: () => true, clear },
+        },
+      })
+
+      // when
+      await handler(
+        { tool: "skill", sessionID: "ses_parent", callID: "call-start" },
+        { args: { name: "/start-work" } },
+      )
+
+      // then
+      const resumed = readBoulderState(testDirectory)
+      expect(clear).toHaveBeenCalledWith("ses_parent")
+      expect(resumed?.status).toBe("active")
+      expect(resumed?.session_ids).toEqual(expect.arrayContaining(["ses_parent", "ses_child"]))
+      expect(resumed?.active_work_id).toBe(work.work_id)
+    })
+
+    test("stops every tracked work session so a late child cannot resume continuation from stale in-memory state", async () => {
+      // given
+      const state = createBoulderState(join(testDirectory, ".sisyphus", "plans", "plan-c.md"), "ses_parent", "atlas")
+      writeBoulderState(testDirectory, state)
+      const work = getWorkByPlanName(testDirectory, "plan-c")
+      expect(work).not.toBeNull()
+      appendSessionIdForWork(testDirectory, work.work_id, "ses_child", "appended")
+
+      const stop = mock(() => {})
+      const handler = createToolExecuteBeforeHandler({
+        ctx: { directory: testDirectory, client: { session: { messages: async () => ({ data: [] }) } } },
+        hooks: {
+          stopContinuationGuard: { stop, isStopped: () => false, clear: () => {} },
+          todoContinuationEnforcer: { cancelAllCountdowns: () => {} },
+          ralphLoop: { cancelLoop: () => {} },
+        },
+      })
+
+      // when
+      await handler(
+        { tool: "skill", sessionID: "ses_parent", callID: "call-stop-all" },
+        { args: { name: "/stop-continuation" } },
+      )
+
+      // then
+      expect(stop.mock.calls.map((call) => call[0]).sort()).toEqual(["ses_child", "ses_parent"])
+      expect(readBoulderState(testDirectory)?.status).toBe("paused_by_user")
     })
   })
 })

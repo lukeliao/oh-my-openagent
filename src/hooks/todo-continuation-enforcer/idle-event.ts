@@ -1,5 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { BackgroundManager } from "../../features/background-agent"
+import { getWorkForSession, isWorkStoppedOrExhausted } from "../../features/boulder-state"
 import { getSessionAgent } from "../../features/claude-code-session-state"
 import { normalizeSDKResponse } from "../../shared"
 import { log } from "../../shared/logger"
@@ -22,6 +23,11 @@ function shouldAllowActivityProgress(modelID: string | undefined): boolean {
   }
 
   return !modelID.toLowerCase().includes("codex")
+}
+
+function isTrackedWorkStopped(directory: string, sessionID: string): boolean {
+  const work = getWorkForSession(directory, sessionID)
+  return work?.status !== undefined && isWorkStoppedOrExhausted(work.status)
 }
 
 export async function handleSessionIdle(args: {
@@ -197,6 +203,11 @@ export async function handleSessionIdle(args: {
 
   if (isContinuationStopped?.(sessionID)) {
     log(`[${HOOK_NAME}] Skipped: continuation stopped for session`, { sessionID })
+    return
+  }
+
+  if (isTrackedWorkStopped(ctx.directory, sessionID)) {
+    log(`[${HOOK_NAME}] Skipped: tracked boulder work is stopped`, { sessionID })
     return
   }
 

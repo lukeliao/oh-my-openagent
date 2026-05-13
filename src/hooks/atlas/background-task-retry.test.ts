@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { createAtlasHook } from "./atlas-hook"
-import { clearBoulderState, writeBoulderState } from "../../features/boulder-state"
+import { clearBoulderState, pauseWork, writeBoulderState } from "../../features/boulder-state"
 import { _resetForTesting, clearSessionAgent, registerAgentName, setSessionAgent } from "../../features/claude-code-session-state"
 
 // Force process isolation in CI runner (globalThis.setTimeout override conflicts with other atlas tests)
@@ -410,6 +410,66 @@ describe("atlas background task retry", () => {
     expect(promptAsyncMock).toHaveBeenCalledTimes(0)
   })
 
+  test("#given tracked child work is paused before a late idle/retry #when descendant session idles later #then atlas does not resurrect continuation", async () => {
+    // given
+    const descendantSessionID = "ses_descendant_paused"
+    setSessionAgent(descendantSessionID, "atlas")
+    const planPath = join(testDir, "test-plan.md")
+    writeFileSync(planPath, "# Plan\n- [ ] Task 1\n- [ ] Task 2")
+    writeBoulderState(testDir, {
+      active_plan: planPath,
+      started_at: "2026-01-02T10:00:00Z",
+      session_ids: [sessionID, descendantSessionID],
+      session_origins: {
+        [sessionID]: "direct",
+        [descendantSessionID]: "appended",
+      },
+      plan_name: "test-plan",
+      agent: "atlas",
+    })
+    pauseWork(testDir, "paused_by_user")
+
+    let backgroundRunning = true
+    const promptAsyncMock = mock(async () => ({}))
+    const hook = createAtlasHook({
+      directory: testDir,
+      client: {
+        session: {
+          get: async ({ path }: { path: { id: string } }) => ({
+            data: {
+              id: path.id,
+              parentID: path.id === descendantSessionID ? sessionID : undefined,
+            },
+          }),
+          promptAsync: promptAsyncMock,
+          messages: async () => ({ data: [{ info: { agent: "atlas", providerID: "openai", modelID: "gpt-5.4" } }] }),
+        },
+      },
+    } as unknown as PluginInput, {
+      directory: testDir,
+      isContinuationStopped: (currentSessionID: string) => currentSessionID === sessionID || currentSessionID === descendantSessionID,
+      backgroundManager: {
+        getTasksByParentSession: (currentSessionID: string) => {
+          if (currentSessionID !== descendantSessionID) {
+            return []
+          }
+          return backgroundRunning ? [{ status: "running" }] : []
+        },
+      } as unknown as NonNullable<Parameters<typeof createAtlasHook>[1]>["backgroundManager"] & {
+        getTasksByParentSession: (sessionID: string) => Array<{ status: string }>
+      },
+    })
+
+    // when
+    await hook.handler({ event: { type: "session.idle", properties: { sessionID: descendantSessionID } } })
+    backgroundRunning = false
+    await firePendingTimers()
+
+    // then
+    expect(promptAsyncMock).toHaveBeenCalledTimes(0)
+    expect(capturedTimers.size).toBe(0)
+  })
+
   test("#given continuation injection is already in flight #when another idle event arrives #then atlas does not inject twice", async () => {
     // given
     const planPath = join(testDir, "test-plan.md")
@@ -545,5 +605,48 @@ describe("atlas background task retry", () => {
     // then
     expect(promptAsyncMock).toHaveBeenCalledTimes(2)
     expect(capturedTimers.size).toBe(0)
+  })
+
+  test("#given work is paused after retry is scheduled #when delayed retry callback fires #then atlas does not inject continuation", async () => {
+    // given
+    const planPath = join(testDir, "paused-plan.md")
+    writeFileSync(planPath, "# Plan\n- [ ] Task 1\n- [ ] Task 2")
+    writeBoulderState(testDir, {
+      active_plan: planPath,
+      started_at: "2026-01-02T10:00:00Z",
+      session_ids: [sessionID],
+      plan_name: "paused-plan",
+      agent: "atlas",
+    })
+
+    let backgroundRunning = true
+    const promptAsyncMock = mock(async () => ({}))
+
+    const hook = createAtlasHook({
+      directory: testDir,
+      client: {
+        session: {
+          promptAsync: promptAsyncMock,
+          messages: async () => ({ data: [] }),
+        },
+      },
+    } as unknown as PluginInput, {
+      directory: testDir,
+      backgroundManager: {
+        getTasksByParentSession: () => backgroundRunning ? [{ status: "running" }] : [],
+      } as unknown as NonNullable<Parameters<typeof createAtlasHook>[1]>["backgroundManager"] & {
+        getTasksByParentSession: (sessionID: string) => Array<{ status: string }>
+      },
+    })
+
+    // when
+    await hook.handler({ event: { type: "session.idle", properties: { sessionID } } })
+    expect(capturedTimers.size).toBe(1)
+    pauseWork(testDir, "paused_by_user")
+    backgroundRunning = false
+    await firePendingTimers()
+
+    // then
+    expect(promptAsyncMock).not.toHaveBeenCalled()
   })
 })

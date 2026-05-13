@@ -2,7 +2,7 @@ import type { PluginContext } from "./types"
 import { randomUUID } from "node:crypto"
 
 import { getMainSessionID } from "../features/claude-code-session-state"
-import { clearBoulderState } from "../features/boulder-state"
+import { pauseWork, readBoulderState, resumeWork } from "../features/boulder-state"
 import { log } from "../shared"
 import { stripInvisibleAgentCharacters } from "../shared/agent-display-names"
 import { resolveSessionAgent } from "./session-agent-resolver"
@@ -30,6 +30,41 @@ export function createToolExecuteBeforeHandler(args: {
   output: { args: Record<string, unknown> },
 ) => Promise<void> {
   const { ctx, hooks } = args
+
+  function stopTrackedWorkSessions(primarySessionID: string): string[] {
+    const sessionIDs = new Set<string>([primarySessionID])
+    const state = readBoulderState(ctx.directory)
+    for (const trackedSessionID of state?.session_ids ?? []) {
+      if (typeof trackedSessionID === "string" && trackedSessionID.length > 0) {
+        sessionIDs.add(trackedSessionID)
+      }
+    }
+
+    for (const sessionID of sessionIDs) {
+      hooks.stopContinuationGuard?.stop(sessionID)
+    }
+
+    return [...sessionIDs]
+  }
+
+  function resumeTrackedWork(sessionID: string, command: string): void {
+    const resumed = resumeWork(ctx.directory)
+    if (resumed) {
+      log("[stop-continuation] Paused boulder work resumed by work-starting command", {
+        sessionID,
+        command,
+        activeWorkId: resumed.active_work_id,
+      })
+    }
+
+    if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
+      hooks.stopContinuationGuard.clear(sessionID)
+      log("[stop-continuation] Stop state cleared by work-starting command", {
+        sessionID,
+        command,
+      })
+    }
+  }
 
   function buildUltraworkOracleVerificationPrompt(prompt: string, originalTask: string, verificationAttemptId: string): string {
     const verificationPrompt = [
@@ -105,7 +140,7 @@ export function createToolExecuteBeforeHandler(args: {
       const subagentType = typeof argsObject.subagent_type === "string" ? argsObject.subagent_type : undefined
       const taskId = typeof argsObject.task_id === "string" ? argsObject.task_id : undefined
 
-      if (category) {
+      if (category && !subagentType) {
         argsObject.subagent_type = "sisyphus-junior"
       } else if (!subagentType && taskId) {
         const resolvedAgent = await resolveSessionAgent(ctx.client, taskId)
@@ -180,12 +215,14 @@ export function createToolExecuteBeforeHandler(args: {
       const sessionID = input.sessionID || getMainSessionID()
 
       if (command === "stop-continuation" && sessionID) {
-        hooks.stopContinuationGuard?.stop(sessionID)
+        const stoppedSessionIDs = stopTrackedWorkSessions(sessionID)
         hooks.todoContinuationEnforcer?.cancelAllCountdowns()
         hooks.ralphLoop?.cancelLoop(sessionID)
-        clearBoulderState(ctx.directory)
+        const pausedState = pauseWork(ctx.directory, "paused_by_user")
         log("[stop-continuation] All continuation mechanisms stopped", {
           sessionID,
+          stoppedSessionIDs,
+          pausedWork: pausedState?.active_work_id,
         })
       }
 
@@ -193,13 +230,7 @@ export function createToolExecuteBeforeHandler(args: {
       // This ensures /stop-continuation persists until the user intentionally restarts.
       const workStartingCommands = ["start-work", "ralph-loop", "ulw-loop"]
       if (workStartingCommands.includes(command ?? "") && sessionID) {
-        if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
-          hooks.stopContinuationGuard.clear(sessionID)
-          log("[stop-continuation] Stop state cleared by work-starting command", {
-            sessionID,
-            command,
-          })
-        }
+        resumeTrackedWork(sessionID, command ?? "")
       }
     }
   }

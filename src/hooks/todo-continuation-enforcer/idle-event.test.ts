@@ -1,7 +1,12 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
+import { randomUUID } from "node:crypto"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
+import { pauseWork, writeBoulderState } from "../../features/boulder-state"
 import { handleSessionIdle } from "./idle-event"
 import type { SessionStateStore } from "./session-state"
 import type { ContinuationProgressUpdate, SessionState } from "./types"
@@ -42,6 +47,19 @@ function createStateStore(): {
 }
 
 describe("handleSessionIdle", () => {
+  let testDir = ""
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `todo-idle-stop-${randomUUID()}`)
+    mkdirSync(testDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true })
+    }
+  })
+
   it("resets continuation progress once when todos are empty", async () => {
     // given
     const sessionID = "ses_empty_todos"
@@ -95,5 +113,45 @@ describe("handleSessionIdle", () => {
 
     // then
     expect(resetCalls).toEqual([sessionID])
+  })
+
+  it("skips countdown when tracked boulder work is paused_by_user", async () => {
+    // given
+    const sessionID = "ses_paused_boulder"
+    const { store } = createStateStore()
+    const planPath = join(testDir, "plan.md")
+    writeFileSync(planPath, "- [ ] Continue")
+    writeBoulderState(testDir, {
+      active_plan: planPath,
+      started_at: new Date().toISOString(),
+      session_ids: [sessionID],
+      plan_name: "paused-plan",
+      agent: "sisyphus",
+    })
+    pauseWork(testDir, "paused_by_user")
+
+    const showToast = mock(async () => ({}))
+    const ctx = {
+      client: {
+        session: {
+          messages: async () => ({ data: [] }),
+          todo: async () => ({
+            data: [{ id: "todo-1", content: "Continue", status: "pending", priority: "high" }],
+          }),
+        },
+        tui: { showToast },
+      },
+      directory: testDir,
+    }
+
+    // when
+    await handleSessionIdle({
+      ctx: ctx as never,
+      sessionID,
+      sessionStateStore: store,
+    })
+
+    // then
+    expect(showToast).not.toHaveBeenCalled()
   })
 })

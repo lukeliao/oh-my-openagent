@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { getWorkForSession, isWorkStoppedOrExhausted } from "../../features/boulder-state"
 import { log } from "../../shared/logger"
 import type { RalphLoopOptions, RalphLoopState } from "./types"
 import { HOOK_NAME } from "./constants"
@@ -34,6 +35,11 @@ function hasRunningBackgroundTasks(
 	return backgroundManager
 		? backgroundManager.getTasksByParentSession(sessionID).some((task: { status: string }) => task.status === "running")
 		: false
+}
+
+function isTrackedWorkStopped(directory: string, sessionID: string): boolean {
+	const work = getWorkForSession(directory, sessionID)
+	return work?.status !== undefined && isWorkStoppedOrExhausted(work.status)
 }
 
 function getInfoSessionID(props: Record<string, unknown> | undefined): string | undefined {
@@ -211,6 +217,11 @@ export function createRalphLoopEventHandler(
 			try {
 				const state = options.loopState.getState()
 				if (!state || !state.active) {
+					return
+				}
+
+				if (isTrackedWorkStopped(options.directory, sessionID)) {
+					log(`[${HOOK_NAME}] Skipped: tracked boulder work is stopped`, { sessionID })
 					return
 				}
 
@@ -406,6 +417,11 @@ export function createRalphLoopEventHandler(
 				const state = options.loopState.getState()
 				if (!state || !state.active) {
 					handleErroredLoopSession(props, options.loopState)
+					return
+				}
+
+				if (isTrackedWorkStopped(options.directory, sessionID)) {
+					log(`[${HOOK_NAME}] Skipped runtime error retry: tracked boulder work is stopped`, { sessionID })
 					return
 				}
 

@@ -1,4 +1,5 @@
 import type { CreatedHooks } from "../create-hooks"
+import { resumeWork } from "../features/boulder-state"
 import { parseRalphLoopArguments } from "../hooks/ralph-loop/command-arguments"
 import { log } from "../shared/logger"
 
@@ -23,12 +24,34 @@ function hasPartsOutput(value: unknown): value is CommandExecuteBeforeOutput {
 }
 
 export function createCommandExecuteBeforeHandler(args: {
+  directory?: string
   hooks: CreatedHooks
 }): (
   input: CommandExecuteBeforeInput,
   output: CommandExecuteBeforeOutput,
 ) => Promise<void> {
-  const { hooks } = args
+  const { directory, hooks } = args
+
+  function resumeTrackedWork(sessionID: string, command: string): void {
+    if (directory) {
+      const resumed = resumeWork(directory)
+      if (resumed) {
+        log("[stop-continuation] Paused boulder work resumed by native command", {
+          sessionID,
+          command,
+          activeWorkId: resumed.active_work_id,
+        })
+      }
+    }
+
+    if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
+      hooks.stopContinuationGuard.clear(sessionID)
+      log("[stop-continuation] Stop state cleared by native command", {
+        sessionID,
+        command,
+      })
+    }
+  }
 
   return async (input, output): Promise<void> => {
     await hooks.autoSlashCommand?.["command.execute.before"]?.(input, output)
@@ -46,13 +69,7 @@ export function createCommandExecuteBeforeHandler(args: {
         })
         output.message ??= {}
         output.message[NATIVE_LOOP_TRIGGERED_FLAG] = true
-        if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
-          hooks.stopContinuationGuard.clear(sessionID)
-          log("[stop-continuation] Stop state cleared by native command", {
-            sessionID,
-            command: normalizedCommand,
-          })
-        }
+        resumeTrackedWork(sessionID, normalizedCommand)
       } else if (normalizedCommand === "cancel-ralph") {
         hooks.ralphLoop.cancelLoop(sessionID)
         output.message ??= {}
@@ -65,14 +82,8 @@ export function createCommandExecuteBeforeHandler(args: {
       && normalizedCommand === "start-work"
       && hasPartsOutput(output)
     ) {
+      resumeTrackedWork(sessionID, normalizedCommand)
       await hooks.startWork["command.execute.before"]?.(input, output)
-      if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
-        hooks.stopContinuationGuard.clear(sessionID)
-        log("[stop-continuation] Stop state cleared by native command", {
-          sessionID,
-          command: normalizedCommand,
-        })
-      }
     }
   }
 }

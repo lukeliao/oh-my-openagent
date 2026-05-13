@@ -1,6 +1,7 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 
 import type { BackgroundManager } from "../../features/background-agent"
+import { getWorkForSession, isWorkStoppedOrExhausted } from "../../features/boulder-state"
 import {
   getSessionAgent,
   resolveRegisteredAgentName,
@@ -43,6 +44,11 @@ function hasWritePermission(tools: Record<string, ToolPermission> | undefined): 
   )
 }
 
+function isTrackedWorkStopped(directory: string, sessionID: string): boolean {
+  const work = getWorkForSession(directory, sessionID)
+  return work?.status !== undefined && isWorkStoppedOrExhausted(work.status)
+}
+
 export async function injectContinuation(args: {
   ctx: PluginInput
   sessionID: string
@@ -75,6 +81,11 @@ export async function injectContinuation(args: {
 
   if (isContinuationStopped?.(sessionID)) {
     log(`[${HOOK_NAME}] Skipped injection: continuation stopped for session`, { sessionID })
+    return
+  }
+
+  if (isTrackedWorkStopped(ctx.directory, sessionID)) {
+    log(`[${HOOK_NAME}] Skipped injection: tracked boulder work is stopped`, { sessionID })
     return
   }
 

@@ -3,6 +3,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test"
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { pauseWork, writeBoulderState } from "../../features/boulder-state"
 import { createRalphLoopHook } from "./index"
 import { readState, writeState, clearState } from "./storage"
 import type { RalphLoopState } from "./types"
@@ -881,6 +882,32 @@ describe("ralph-loop", () => {
       expect(promptAsyncCalls).toBe(1)
       expect(promptCalls.length).toBe(1)
       expect(hook.getState()?.iteration).toBe(2)
+    })
+
+    test("should not continue when tracked boulder work is paused_by_user", async () => {
+      // given
+      const planPath = join(TEST_DIR, "paused-ralph-plan.md")
+      writeFileSync(planPath, "- [ ] Continue")
+      writeBoulderState(TEST_DIR, {
+        active_plan: planPath,
+        started_at: new Date().toISOString(),
+        session_ids: ["session-123"],
+        plan_name: "paused-ralph",
+        agent: "sisyphus",
+      })
+      pauseWork(TEST_DIR, "paused_by_user")
+
+      const hook = createRalphLoopHook(createMockPluginInput(), { idleSettleMs: 0 })
+      hook.startLoop("session-123", "Build feature", { maxIterations: 10 })
+
+      // when
+      await hook.event({
+        event: { type: "session.idle", properties: { sessionID: "session-123" } },
+      })
+
+      // then
+      expect(promptCalls.length).toBe(0)
+      expect(hook.getState()?.iteration).toBe(1)
     })
 
     test("should clear loop state on user abort (MessageAbortedError)", async () => {

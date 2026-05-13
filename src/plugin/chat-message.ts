@@ -1,4 +1,5 @@
 import type { OhMyOpenCodeConfig } from "../config"
+import { resumeWork } from "../features/boulder-state"
 import type { PluginContext } from "./types"
 
 import { isModelCacheAvailable, log } from "../shared"
@@ -144,10 +145,22 @@ function isStartWorkFallbackTemplate(promptText: string): boolean {
 }
 
 function clearStoppedContinuationBeforeWorkStart(
+  directory: string | undefined,
   hooks: CreatedHooks,
   sessionID: string,
   command: "start-work" | "ralph-loop" | "ulw-loop"
 ): void {
+  if (directory) {
+    const resumed = resumeWork(directory)
+    if (resumed) {
+      log("[stop-continuation] Paused boulder work resumed by chat.message work-starting command", {
+        sessionID,
+        command,
+        activeWorkId: resumed.active_work_id,
+      })
+    }
+  }
+
   if (hooks.stopContinuationGuard?.isStopped(sessionID)) {
     hooks.stopContinuationGuard.clear(sessionID)
     log("[stop-continuation] Stop state cleared by chat.message work-starting command", {
@@ -241,7 +254,7 @@ export function createChatMessageHandler(args: {
     if (hooks.startWork && isStartWorkHookOutput(output)) {
       const promptText = extractPromptText(output.parts)
       if (isStartWorkFallbackTemplate(promptText)) {
-        clearStoppedContinuationBeforeWorkStart(hooks, input.sessionID, "start-work")
+        clearStoppedContinuationBeforeWorkStart(ctx.directory, hooks, input.sessionID, "start-work")
       }
       await hooks.startWork["chat.message"]?.(input, output)
     }
@@ -285,7 +298,7 @@ export function createChatMessageHandler(args: {
         const ultrawork = isUlwLoopTemplate || rawLoopCommand?.command === "ulw-loop"
         const command = ultrawork ? "ulw-loop" : "ralph-loop"
 
-        clearStoppedContinuationBeforeWorkStart(hooks, input.sessionID, command)
+        clearStoppedContinuationBeforeWorkStart(ctx.directory, hooks, input.sessionID, command)
         hooks.ralphLoop.startLoop(input.sessionID, parsedArguments.prompt, {
           ultrawork,
           maxIterations: parsedArguments.maxIterations,

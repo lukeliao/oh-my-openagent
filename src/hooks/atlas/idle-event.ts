@@ -4,6 +4,7 @@ import {
   formatDurationHuman,
   getPlanProgress,
   getWorkForSession,
+  isWorkStoppedOrExhausted,
   getTaskSessionState,
   readBoulderState,
   readCurrentTopLevelTask,
@@ -41,6 +42,11 @@ function hasRunningBackgroundTasks(sessionID: string, options?: AtlasHookOptions
   return backgroundManager
     ? backgroundManager.getTasksByParentSession(sessionID).some((task: { status: string }) => task.status === "running")
     : false
+}
+
+function isTrackedWorkStopped(directory: string, sessionID: string): boolean {
+  const work = getWorkForSession(directory, sessionID)
+  return work?.status !== undefined && isWorkStoppedOrExhausted(work.status)
 }
 
 async function injectContinuation(input: {
@@ -186,6 +192,7 @@ function scheduleRetry(input: {
     const currentProgress = getPlanProgress(resolveBoulderPlanPath(ctx.directory, currentBoulder))
     if (currentProgress.isComplete) return
     if (options?.isContinuationStopped?.(sessionID)) return
+    if (isTrackedWorkStopped(ctx.directory, sessionID)) return
     const canContinueSession = await canContinueTrackedBoulderSession({
       client: ctx.client,
       sessionID,
@@ -356,6 +363,11 @@ export async function handleAtlasSessionIdle(input: {
 
     sessionState.promptFailureCount = 0
     sessionState.lastFailureAt = undefined
+  }
+
+  if (isTrackedWorkStopped(ctx.directory, sessionID)) {
+    log(`[${HOOK_NAME}] Skipped: tracked boulder work is stopped`, { sessionID })
+    return
   }
 
   if (hasRunningBackgroundTasks(sessionID, options)) {

@@ -388,7 +388,7 @@ export function buildStartWorkContextInfo(params: {
   const { ctx, explicitPlanName, existingState, sessionId, timestamp, activeAgent, worktreePath, worktreeBlock } = params
 
   const resumeOptions = getWorkResumeOptions(ctx.directory)
-    .filter((option) => option.status === "active" || option.status === "paused")
+    .filter((option) => option.status === "active" || option.status === "paused" || option.status === "paused_by_user")
 
   if (!explicitPlanName && resumeOptions.length > 1) {
     return buildMultipleActiveWorksContext({
