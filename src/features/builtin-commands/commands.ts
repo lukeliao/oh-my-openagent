@@ -87,7 +87,7 @@ ${refactorContent}
       argumentHint: "<refactoring-target> [--scope=<file|module|project>] [--strategy=<safe|aggressive>]",
     },
     "start-work": {
-      description: "(builtin) Start Sisyphus work session from Prometheus plan",
+      description: "(builtin) Start or resume Sisyphus work session from a Prometheus plan",
       agent: resolveStartWorkAgent(options),
       template: `<command-instruction>
 ${START_WORK_TEMPLATE}
@@ -104,7 +104,7 @@ $ARGUMENTS
       argumentHint: "[plan-name]",
     },
     "stop-continuation": {
-      description: "(builtin) Stop all continuation mechanisms (ralph loop, todo continuation, boulder) for this session",
+      description: "(builtin) Pause active work and stop continuation mechanisms for this session",
       template: `<command-instruction>
 ${STOP_CONTINUATION_TEMPLATE}
 </command-instruction>`,

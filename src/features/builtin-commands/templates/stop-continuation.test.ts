@@ -20,6 +20,17 @@ describe("stop-continuation template", () => {
     // then - it should mention key behaviors
     expect(STOP_CONTINUATION_TEMPLATE).toContain("todo-continuation-enforcer")
     expect(STOP_CONTINUATION_TEMPLATE).toContain("Ralph Loop")
-    expect(STOP_CONTINUATION_TEMPLATE).toContain("boulder state")
+    expect(STOP_CONTINUATION_TEMPLATE).toContain("Pause the active boulder work")
+  })
+
+  test("should describe paused-work resume semantics", () => {
+    // given - the stop-continuation template
+
+    // when - we check the paused-work contract text
+
+    // then - it should describe pause/resume instead of destructive clear
+    expect(STOP_CONTINUATION_TEMPLATE).toContain("paused_by_user")
+    expect(STOP_CONTINUATION_TEMPLATE).toContain("/start-work")
+    expect(STOP_CONTINUATION_TEMPLATE).toContain("Ordinary chat will not clear the paused state")
   })
 })

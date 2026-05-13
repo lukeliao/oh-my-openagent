@@ -83,6 +83,28 @@ describe("loadBuiltinCommands", () => {
     expect(commands["start-work"].agent).toBe("atlas")
   })
 
+  test("should describe start-work as start-or-resume behavior", () => {
+    //#given
+
+    //#when
+    const commands = loadBuiltinCommands()
+
+    //#then
+    expect(commands["start-work"].description).toContain("Start or resume")
+    expect(commands["start-work"].description).toContain("Prometheus plan")
+  })
+
+  test("should describe stop-continuation as pause behavior", () => {
+    //#given
+
+    //#when
+    const commands = loadBuiltinCommands()
+
+    //#then
+    expect(commands["stop-continuation"].description).toContain("Pause active work")
+    expect(commands["stop-continuation"].description).toContain("continuation mechanisms")
+  })
+
   test("should preassign Sisyphus as the native agent for start-work when command config checks registered agents", () => {
     //#given - no atlas registration
 

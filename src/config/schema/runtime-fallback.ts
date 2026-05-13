@@ -5,9 +5,9 @@ export const RuntimeFallbackConfigSchema = z.object({
   enabled: z.boolean().optional(),
   /** HTTP status codes that trigger fallback (default: [400, 429, 503, 529]) */
   retry_on_errors: z.array(z.number()).optional(),
-  /** Maximum fallback attempts per session (default: 3) */
+  /** Maximum reactive fallback attempts per session before provider_exhausted summarying (default: 3) */
   max_fallback_attempts: z.number().min(1).max(20).optional(),
-  /** Cooldown in seconds before retrying a failed model (default: 60) */
+  /** Base cooldown in seconds before retrying a failed model when provider pacing does not supply Retry-After guidance (default: 60) */
   cooldown_seconds: z.number().min(0).optional(),
   /** Session-level timeout in seconds to advance fallback when provider hangs (default: 30). Set to 0 to disable auto-retry signal detection (only error-based fallback remains active). */
   timeout_seconds: z.number().min(0).optional(),

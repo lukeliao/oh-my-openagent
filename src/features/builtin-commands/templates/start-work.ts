@@ -1,9 +1,9 @@
-export const START_WORK_TEMPLATE = `You are starting a Sisyphus work session.
+export const START_WORK_TEMPLATE = `You are starting or resuming a Sisyphus work session.
 
 ## ARGUMENTS
 
 - \`/start-work [plan-name] [--worktree <path>]\`
-  - \`plan-name\` (optional): name or partial match of the plan to start
+  - \`plan-name\` (optional): name or partial match of the plan to start or resume
   - \`--worktree <path>\` (optional): absolute path to an existing git worktree to work in
     - If specified and valid: hook pre-sets worktree_path in boulder.json
     - If specified but invalid: you must run \`git worktree add <path> <branch>\` first
@@ -17,10 +17,10 @@ export const START_WORK_TEMPLATE = `You are starting a Sisyphus work session.
 
 3. **Decision logic**:
    - If multiple active works are listed in your context:
-     - This means boulder.json has more than one work with status: \`active\` or \`paused\`
-     - Use the Question tool to ask the user which plan to resume
-     - Resume by running \`/start-work {plan-name}\` for the selected plan
-     - If the user says "start a new plan", continue with cold-start auto-selection logic
+      - This means boulder.json has more than one work with status: \`active\`, \`paused\`, or \`paused_by_user\`
+      - Use the Question tool to ask the user which plan to resume
+      - Resume by running \`/start-work {plan-name}\` for the selected plan
+      - If the user says "start a new plan", continue with cold-start auto-selection logic
    - If exactly one active work is listed and the user did not name a plan:
      - Auto-resume that single active work
    - If no active plan OR plan is complete:
@@ -45,7 +45,7 @@ export const START_WORK_TEMPLATE = `You are starting a Sisyphus work session.
    }
    \`\`\`
 
-6. **Read the plan file** and start executing tasks according to atlas workflow
+ 6. **Read the plan file** and start or resume executing tasks according to atlas workflow
 
 ## OUTPUT FORMAT
 
@@ -90,6 +90,7 @@ Reading plan and beginning execution...
 
 - The session_id is injected by the hook - use it directly
 - Always update boulder.json BEFORE starting work
+- If the active work is paused (including \`paused_by_user\`), explicit \`/start-work\` resumes it to \`active\` before continuation continues
 - If worktree_path is set in boulder.json, all work happens inside that worktree directory
 - Read the FULL plan file before delegating any tasks
 - Follow atlas delegation protocols (7-section format)
