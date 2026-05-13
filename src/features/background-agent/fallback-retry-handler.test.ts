@@ -1,52 +1,26 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test"
-
-const sharedLogMock = mock(() => {})
-const readConnectedProvidersCacheMock = mock(() => null)
-const readProviderModelsCacheMock = mock((): { connected: string[] } | null => null)
-const shouldRetryErrorMock = mock(() => true)
-const getNextFallbackMock = mock((chain: Array<{ model: string }>, attempt: number) => chain[attempt])
-const hasMoreFallbacksMock = mock((chain: Array<{ model: string }>, attempt: number) => attempt < chain.length)
-const selectFallbackProviderMock = mock((providers: string[]) => providers[0])
-const transformModelForProviderMock = mock((_provider: string, model: string) => model)
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { createBoulderState, pauseWork, writeBoulderState } from "../boulder-state"
+import * as connectedProvidersCacheModule from "../../shared/connected-providers-cache"
+import * as loggerModule from "../../shared/logger"
+import * as modelErrorClassifierModule from "../../shared/model-error-classifier"
+import * as providerModelIdTransformModule from "../../shared/provider-model-id-transform"
 
 import type { BackgroundTask } from "./types"
 import type { ConcurrencyManager } from "./concurrency"
 import type { OpencodeClient, QueueItem } from "./constants"
+import { tryFallbackRetry } from "./fallback-retry-handler"
 
-async function importFreshFallbackRetryHandlerModule() {
-  mock.module("../../shared/logger", () => ({
-    log: sharedLogMock,
-  }))
-
-  mock.module("../../shared/connected-providers-cache", () => ({
-    readConnectedProvidersCache: readConnectedProvidersCacheMock,
-    readProviderModelsCache: readProviderModelsCacheMock,
-  }))
-
-  mock.module("../../shared/model-error-classifier", () => ({
-    shouldRetryError: shouldRetryErrorMock,
-    getNextFallback: getNextFallbackMock,
-    hasMoreFallbacks: hasMoreFallbacksMock,
-    selectFallbackProvider: selectFallbackProviderMock,
-  }))
-
-  mock.module("../../shared/provider-model-id-transform", () => ({
-    transformModelForProvider: transformModelForProviderMock,
-  }))
-
-  const retryHandlerModule = await import(`./fallback-retry-handler?test=${Date.now()}-${Math.random()}`)
-  mock.restore()
-
-  return {
-    tryFallbackRetry: retryHandlerModule.tryFallbackRetry,
-    shouldRetryError: shouldRetryErrorMock,
-    selectFallbackProvider: selectFallbackProviderMock,
-    readProviderModelsCache: readProviderModelsCacheMock,
-  }
-}
-
-const { tryFallbackRetry, shouldRetryError, selectFallbackProvider, readProviderModelsCache } =
-  await importFreshFallbackRetryHandlerModule()
+let readConnectedProvidersCacheSpy: ReturnType<typeof spyOn<typeof connectedProvidersCacheModule, "readConnectedProvidersCache">>
+let readProviderModelsCacheSpy: ReturnType<typeof spyOn<typeof connectedProvidersCacheModule, "readProviderModelsCache">>
+let shouldRetryErrorSpy: ReturnType<typeof spyOn<typeof modelErrorClassifierModule, "shouldRetryError">>
+let getNextFallbackSpy: ReturnType<typeof spyOn<typeof modelErrorClassifierModule, "getNextFallback">>
+let hasMoreFallbacksSpy: ReturnType<typeof spyOn<typeof modelErrorClassifierModule, "hasMoreFallbacks">>
+let selectFallbackProviderSpy: ReturnType<typeof spyOn<typeof modelErrorClassifierModule, "selectFallbackProvider">>
+let transformModelForProviderSpy: ReturnType<typeof spyOn<typeof providerModelIdTransformModule, "transformModelForProvider">>
+let logSpy: ReturnType<typeof spyOn<typeof loggerModule, "log">>
 
 function createDeferredPromise(): {
   promise: Promise<void>
@@ -60,6 +34,10 @@ function createDeferredPromise(): {
     promise,
     resolve: resolvePromise,
   }
+}
+
+function createTempDirectory(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix))
 }
 
 function createMockTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
@@ -133,9 +111,24 @@ describe("tryFallbackRetry", () => {
   })
 
   beforeEach(() => {
-    shouldRetryError.mockImplementation(() => true)
-    selectFallbackProvider.mockImplementation((providers: string[]) => providers[0])
-    readProviderModelsCache.mockReturnValue(null)
+    mock.restore()
+    logSpy = spyOn(loggerModule, "log").mockImplementation(() => {})
+    readConnectedProvidersCacheSpy = spyOn(connectedProvidersCacheModule, "readConnectedProvidersCache").mockReturnValue(null)
+    readProviderModelsCacheSpy = spyOn(connectedProvidersCacheModule, "readProviderModelsCache").mockReturnValue(null)
+    shouldRetryErrorSpy = spyOn(modelErrorClassifierModule, "shouldRetryError").mockImplementation(() => true)
+    getNextFallbackSpy = spyOn(modelErrorClassifierModule, "getNextFallback").mockImplementation(
+      (chain: Array<{ model: string }>, attempt: number) => chain[attempt],
+    )
+    hasMoreFallbacksSpy = spyOn(modelErrorClassifierModule, "hasMoreFallbacks").mockImplementation(
+      (chain: Array<{ model: string }>, attempt: number) => attempt < chain.length,
+    )
+    selectFallbackProviderSpy = spyOn(modelErrorClassifierModule, "selectFallbackProvider").mockImplementation(
+      (providers: string[]) => providers[0],
+    )
+    transformModelForProviderSpy = spyOn(
+      providerModelIdTransformModule,
+      "transformModelForProvider",
+    ).mockImplementation((_provider: string, model: string) => model)
   })
 
   describe("#given retryable error with fallback chain", () => {
@@ -260,6 +253,15 @@ describe("tryFallbackRetry", () => {
       expect(args.processKey).toHaveBeenCalledWith(key)
     })
 
+    test("enqueues retry immediately", async () => {
+      const args = createDefaultArgs()
+
+      await tryFallbackRetry(args)
+
+      expect(args.processKey).toHaveBeenCalledTimes(1)
+      expect(args.queuesByKey.size).toBe(1)
+    })
+
     test("preserves team identity and session callback in retry input", async () => {
       const onSessionCreated = mock(async () => {})
       const args = createDefaultArgs({
@@ -332,7 +334,7 @@ describe("tryFallbackRetry", () => {
 
   describe("#given non-retryable error", () => {
     test("returns false when shouldRetryError returns false", async () => {
-      shouldRetryError.mockImplementation(() => false)
+      shouldRetryErrorSpy.mockImplementation(() => false)
       const args = createDefaultArgs()
 
       const result = await tryFallbackRetry(args)
@@ -433,8 +435,9 @@ describe("tryFallbackRetry", () => {
 
   describe("#given disconnected fallback providers with connected preferred provider", () => {
     test("keeps fallback entry and selects connected preferred provider", async () => {
-      readProviderModelsCache.mockReturnValueOnce({ connected: ["provider-a"] })
-      selectFallbackProvider.mockImplementationOnce(
+      readProviderModelsCacheSpy.mockReturnValueOnce({ connected: ["provider-a"] } as never)
+      readConnectedProvidersCacheSpy.mockReturnValueOnce(["provider-a"])
+      selectFallbackProviderSpy.mockImplementationOnce(
         (_providers: string[], preferredProviderID?: string) => preferredProviderID ?? "provider-b",
       )
 
@@ -448,6 +451,73 @@ describe("tryFallbackRetry", () => {
       expect(result).toBe(true)
       expect(args.task.model?.providerID).toBe("provider-a")
       expect(args.task.model?.modelID).toBe("fallback-model-1")
+    })
+  })
+
+  describe("#given tracked work stops before requeue", () => {
+    test("does not enqueue retry when parent tracked work is paused_by_user", async () => {
+      const directory = createTempDirectory("fallback-stop-")
+
+      try {
+        const state = createBoulderState(".sisyphus/plans/test-plan.md", "parent-session-1")
+        writeBoulderState(directory, state)
+        pauseWork(directory, "paused_by_user")
+
+        const args = createDefaultArgs()
+        const result = await tryFallbackRetry({
+          ...args,
+          parentDirectory: directory,
+        })
+
+        expect(result).toBe(false)
+        expect(args.queuesByKey.size).toBe(0)
+        expect(args.processKey).not.toHaveBeenCalled()
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
+    test("does not enqueue paced retry when parent tracked work pauses before delayed callback fires", async () => {
+      const directory = createTempDirectory("fallback-paced-stop-")
+      const originalSetTimeout = globalThis.setTimeout
+      const scheduledCallbacks: Array<() => void> = []
+
+      globalThis.setTimeout = ((handler: Parameters<typeof setTimeout>[0], _delay?: number, ...args: unknown[]) => {
+        if (typeof handler === "function") {
+          scheduledCallbacks.push(() => handler(...args))
+        }
+        return Symbol("paced-retry-timer") as ReturnType<typeof setTimeout>
+      }) as typeof setTimeout
+
+      try {
+        const state = createBoulderState(".sisyphus/plans/test-plan.md", "parent-session-1")
+        writeBoulderState(directory, state)
+
+        const args = createDefaultArgs({
+          model: { providerID: "openai_taobao", modelID: "original-model" },
+          concurrencyKey: "openai_taobao/original-model",
+        })
+        const result = await tryFallbackRetry({
+          ...args,
+          parentDirectory: directory,
+        })
+
+        expect(result).toBe(true)
+        expect(scheduledCallbacks).toHaveLength(1)
+        expect(args.queuesByKey.size).toBe(0)
+        expect(args.processKey).not.toHaveBeenCalled()
+        expect(args.idleDeferralTimers.has("test-task-1")).toBe(true)
+
+        pauseWork(directory, "paused_by_user")
+        scheduledCallbacks[0]?.()
+
+        expect(args.idleDeferralTimers.has("test-task-1")).toBe(false)
+        expect(args.queuesByKey.size).toBe(0)
+        expect(args.processKey).not.toHaveBeenCalled()
+      } finally {
+        globalThis.setTimeout = originalSetTimeout
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
   })
 })

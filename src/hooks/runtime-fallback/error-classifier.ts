@@ -162,6 +162,17 @@ export function isRetryableError(error: unknown, retryOnErrors: number[]): boole
   const statusCode = extractStatusCode(error, retryOnErrors)
   const message = getErrorMessage(error)
   const errorType = classifyErrorType(error)
+  const errorName = extractErrorName(error)?.toLowerCase()
+
+  if (
+    errorType === "invalid_api_key" ||
+    errorName?.includes("authenticationerror") ||
+    /invalid\s+api\s+key/.test(message) ||
+    /authentication\s+failed/.test(message) ||
+    /unauthorized/.test(message)
+  ) {
+    return false
+  }
 
   if (errorType === "missing_api_key") {
     return true
@@ -172,8 +183,6 @@ export function isRetryableError(error: unknown, retryOnErrors: number[]): boole
   }
 
   if (errorType === "quota_exceeded") {
-    // Quota exhaustion means the current model/provider cannot serve requests.
-    // Trigger fallback to the next configured model instead of stopping entirely.
     return true
   }
 

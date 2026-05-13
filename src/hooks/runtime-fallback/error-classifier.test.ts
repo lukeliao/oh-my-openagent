@@ -98,6 +98,20 @@ describe("runtime-fallback error classifier", () => {
     expect(retryable).toBe(true)
   })
 
+  test("treats authentication failures as non-retryable even with retry-like wording", () => {
+    //#given
+    const error = {
+      name: "AuthenticationError",
+      message: "Invalid API key. Please try again after updating your credentials.",
+    }
+
+    //#when
+    const retryable = isRetryableError(error, [429, 503, 529])
+
+    //#then
+    expect(retryable).toBe(false)
+  })
+
   test("ignores non-retry assistant status text", () => {
     //#given
     const info = {

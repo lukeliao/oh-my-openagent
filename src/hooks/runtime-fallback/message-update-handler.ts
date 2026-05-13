@@ -162,6 +162,7 @@ export function createMessageUpdateHandler(deps: HookDeps, helpers: AutoRetryHel
         fallbackModels,
         resolvedAgent,
         source: "message.updated",
+        error: (error && typeof error === "object" ? error as Record<string, unknown> : undefined),
       })
     }
   }

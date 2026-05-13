@@ -1,6 +1,7 @@
 import type { ToolContextWithMetadata, OpencodeClient } from "./types"
 import type { SessionMessage } from "./executor-types"
 import { getDefaultSyncPollTimeoutMs, getTimingConfig } from "./timing"
+import { getWorkForSession, isWorkStoppedOrExhausted } from "../../features/boulder-state"
 import { log } from "../../shared/logger"
 import { normalizeSDKResponse } from "../../shared"
 import { extractErrorMessage } from "../../features/background-agent/error-classifier"
@@ -27,6 +28,20 @@ function abortSyncSession(client: OpencodeClient, sessionID: string, reason: str
 
 function isActiveSessionStatus(status: { type: string } | undefined): boolean {
   return status !== undefined && ACTIVE_SESSION_STATUSES.has(status.type)
+}
+
+function getTrackedStopMessage(ctx: ToolContextWithMetadata, sessionID: string): string | null {
+  const directory = (ctx as ToolContextWithMetadata & { directory?: string }).directory
+  if (!directory) {
+    return null
+  }
+
+  const work = getWorkForSession(directory, sessionID)
+  if (!work?.status || !isWorkStoppedOrExhausted(work.status)) {
+    return null
+  }
+
+  return `Task stopped: tracked work entered ${work.status}.\n\nSession ID: ${sessionID}`
 }
 
 async function fetchSessionMessages(
@@ -98,6 +113,17 @@ export async function pollSyncSession(
   log("[task] Starting poll loop", { sessionID: input.sessionID, agentToUse: input.agentToUse, maxTurns })
 
   while (true) {
+    const trackedStopMessage = getTrackedStopMessage(ctx, input.sessionID)
+    if (trackedStopMessage) {
+      log("[task] Poll stopped by tracked work state", {
+        sessionID: input.sessionID,
+        trackedStatus: getWorkForSession((ctx as ToolContextWithMetadata & { directory?: string }).directory!, input.sessionID)?.status,
+      })
+      abortSyncSession(client, input.sessionID, "tracked_work_stopped")
+      if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
+      return trackedStopMessage
+    }
+
     const inactiveElapsedMs = Date.now() - inactiveStart
     if (inactiveElapsedMs >= maxPollTimeMs) {
       timedOut = true
@@ -141,6 +167,14 @@ export async function pollSyncSession(
 
     await wait(syncTiming.POLL_INTERVAL_MS)
     pollCount++
+
+    const stopMessageAfterWait = getTrackedStopMessage(ctx, input.sessionID)
+    if (stopMessageAfterWait) {
+      log("[task] Poll stopped by tracked work state after wait", { sessionID: input.sessionID })
+      abortSyncSession(client, input.sessionID, "tracked_work_stopped")
+      if (input.toastManager && input.taskId) input.toastManager.removeTask(input.taskId)
+      return stopMessageAfterWait
+    }
 
     let statusResult: { data?: Record<string, { type: string }> }
     try {

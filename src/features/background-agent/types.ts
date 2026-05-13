@@ -65,6 +65,7 @@ export interface BackgroundTask {
   fallbackChain?: FallbackEntry[]
   /** Number of fallback retry attempts made */
   attemptCount?: number
+  retryWindowStartedAt?: string
   /** Active concurrency slot key */
   concurrencyKey?: string
   /** Persistent key for re-acquiring concurrency on resume */

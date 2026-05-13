@@ -41,7 +41,14 @@ export interface FallbackState {
   fallbackIndex: number
   failedModels: Map<string, number>
   attemptCount: number
+  retryStartedAtMs?: number
   pendingFallbackModel?: string
+  providerExhausted?: boolean
+  providerExhaustedAt?: string
+  exhaustedProvider?: string
+  retryElapsedMs?: number
+  lastError?: string
+  terminalSummaryKey?: string
 }
 
 export interface FallbackResult {

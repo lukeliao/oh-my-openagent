@@ -1,4 +1,4 @@
-import { log } from "../../shared"
+import * as loggerModule from "../../shared/logger"
 
 const ACTIVE_SESSION_STATUSES = new Set(["busy", "retry", "running"])
 const KNOWN_TERMINAL_STATUSES = new Set(["idle", "interrupted"])
@@ -9,7 +9,7 @@ export function isActiveSessionStatus(type: string): boolean {
   }
 
   if (!KNOWN_TERMINAL_STATUSES.has(type)) {
-    log("[background-agent] Unknown session status type encountered:", type)
+    loggerModule.log("[background-agent] Unknown session status type encountered:", type)
   }
 
   return false

@@ -121,6 +121,7 @@ export function createSessionStatusHandler(
       fallbackModels,
       resolvedAgent,
       source: "session.status",
+      error: { message: retryMessage },
     })
   }
 }

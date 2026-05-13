@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 declare const require: (name: string) => any
 import { __setTimingConfig, __resetTimingConfig } from "./timing"
+import { createBoulderState, pauseWork, writeBoulderState } from "../../features/boulder-state"
 
 function createMockCtx(aborted = false) {
   const controller = new AbortController()
@@ -11,6 +15,10 @@ function createMockCtx(aborted = false) {
     agent: "test-agent",
     abort: controller.signal,
   }
+}
+
+function createTempDirectory(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix))
 }
 
 describe("pollSyncSession", () => {
@@ -25,6 +33,51 @@ describe("pollSyncSession", () => {
 
   afterEach(() => {
     __resetTimingConfig()
+  })
+
+  describe("tracked stop state", () => {
+    test("exits promptly when tracked work is paused during active polling", async () => {
+      const { pollSyncSession } = require("./sync-session-poller")
+      const directory = createTempDirectory("sync-poller-stop-")
+
+      try {
+        const state = createBoulderState(".sisyphus/plans/test-plan.md", "ses_stop")
+        writeBoulderState(directory, state)
+
+        let statusCallCount = 0
+        const mockClient = {
+          session: {
+            abort: async () => ({}),
+            messages: async () => ({
+              data: [{ info: { id: "msg_001", role: "user", time: { created: 1000 } } }],
+            }),
+            status: async () => {
+              statusCallCount++
+              if (statusCallCount === 2) {
+                pauseWork(directory, "paused_by_user")
+              }
+              return { data: { ses_stop: { type: "running" } } }
+            },
+          },
+        }
+
+        const result = await pollSyncSession({
+          ...createMockCtx(),
+          directory,
+        }, mockClient, {
+          sessionID: "ses_stop",
+          agentToUse: "test-agent",
+          toastManager: null,
+          taskId: undefined,
+        }, 5000)
+
+        expect(result).toContain("Task stopped")
+        expect(result).toContain("ses_stop")
+        expect(statusCallCount).toBe(2)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
   })
 
   describe("native finish-based completion", () => {

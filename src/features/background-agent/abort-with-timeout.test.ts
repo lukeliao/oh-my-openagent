@@ -1,15 +1,10 @@
-import { afterAll, describe, expect, mock, test } from "bun:test"
-
-const logMock = mock(() => {})
-
-mock.module("../../shared/logger", () => ({
-  log: logMock,
-}))
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import * as loggerModule from "../../shared/logger"
 
 import type { OpencodeClient } from "./opencode-client"
+import { abortWithTimeout } from "./abort-with-timeout"
 
-const { abortWithTimeout } = await import("./abort-with-timeout")
-mock.restore()
+let logSpy: ReturnType<typeof spyOn<typeof loggerModule, "log">>
 
 function createClient(abort: (...args: Array<unknown>) => Promise<unknown>): OpencodeClient {
   return {
@@ -20,6 +15,11 @@ function createClient(abort: (...args: Array<unknown>) => Promise<unknown>): Ope
 }
 
 describe("abortWithTimeout", () => {
+  beforeEach(() => {
+    mock.restore()
+    logSpy = spyOn(loggerModule, "log").mockImplementation(() => {})
+  })
+
   afterAll(() => {
     mock.restore()
   })
@@ -34,7 +34,7 @@ describe("abortWithTimeout", () => {
     // then
     expect(result).toBe(true)
     expect(abort).toHaveBeenCalledWith({ path: { id: "session-1" } })
-    expect(logMock).not.toHaveBeenCalled()
+    expect(logSpy).not.toHaveBeenCalled()
   })
 
   test("#given abort hangs indefinitely #when abortWithTimeout runs #then it logs warning and continues", async () => {
@@ -51,7 +51,7 @@ describe("abortWithTimeout", () => {
 
     // then
     expect(result).toBe(false)
-    expect(logMock).toHaveBeenCalledWith(
+    expect(logSpy).toHaveBeenCalledWith(
       "[background-agent] Session abort timed out; continuing cleanup:",
       { sessionID: "session-2", timeoutMs: 1 },
     )

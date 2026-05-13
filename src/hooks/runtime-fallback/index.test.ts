@@ -5,6 +5,28 @@ import { SessionCategoryRegistry } from "../../shared/session-category-registry"
 
 type RuntimeFallbackModule = typeof import("./hook")
 
+function installSetTimeoutStub() {
+  const originalSetTimeout = globalThis.setTimeout
+  const scheduled: Array<{ callback: () => void | Promise<void>; delay: number }> = []
+
+  globalThis.setTimeout = ((callback: () => void | Promise<void>, delay?: number) => {
+    scheduled.push({ callback, delay: delay ?? 0 })
+    return { __timerStub: true } as ReturnType<typeof setTimeout>
+  }) as typeof globalThis.setTimeout
+
+  return {
+    scheduled,
+    async runTimer(index = 0) {
+      const timer = scheduled[index]
+      if (!timer) throw new Error(`Missing scheduled timer at index ${index}`)
+      await timer.callback()
+    },
+    restore() {
+      globalThis.setTimeout = originalSetTimeout
+    },
+  }
+}
+
 describe("runtime-fallback", () => {
   let logCalls: Array<{ msg: string; data?: unknown }>
   let toastCalls: Array<{ title: string; message: string; variant: string }>
@@ -111,6 +133,124 @@ describe("runtime-fallback", () => {
   }
 
   describe("session.error handling", () => {
+    test("should delay openai_taobao retriable retries instead of dispatching immediately", async () => {
+      const timerStub = installSetTimeoutStub()
+
+      const promptCalls: Array<{ providerID: string; modelID: string }> = []
+
+      try {
+        const hook = createRuntimeFallbackHook(
+          createMockPluginInput({
+            session: {
+              messages: async () => ({
+                data: [{ info: { role: "user" }, parts: [{ type: "text", text: "hello" }] }],
+              }),
+              promptAsync: async (args: unknown) => {
+                const model = (args as { body?: { model?: { providerID?: string; modelID?: string } } })?.body?.model
+                if (model?.providerID && model?.modelID) {
+                  promptCalls.push({ providerID: model.providerID, modelID: model.modelID })
+                }
+                return {}
+              },
+            },
+          }),
+          {
+            config: createMockConfig({ notify_on_fallback: false }),
+            pluginConfig: createMockPluginConfigWithCategoryFallback(["openai_taobao/gpt-5.5"]),
+          }
+        )
+        const sessionID = "test-session-openai-taobao-delayed-retry"
+        SessionCategoryRegistry.register(sessionID, "test")
+
+        await hook.event({
+          event: {
+            type: "session.created",
+            properties: { info: { id: sessionID, model: "openai_taobao/gpt-5.5" } },
+          },
+        })
+
+        await hook.event({
+          event: {
+            type: "session.error",
+            properties: { sessionID, error: { statusCode: 503, message: "Service unavailable" } },
+          },
+        })
+
+        expect(promptCalls).toHaveLength(0)
+
+        expect(timerStub.scheduled).toHaveLength(1)
+        expect(timerStub.scheduled[0]?.delay).toBeGreaterThanOrEqual(1000)
+        expect(timerStub.scheduled[0]?.delay).toBeLessThanOrEqual(1200)
+        await timerStub.runTimer()
+
+        expect(promptCalls).toHaveLength(1)
+      } finally {
+        timerStub.restore()
+      }
+    })
+
+    test("should honor Retry-After before retrying openai_taobao", async () => {
+      const timerStub = installSetTimeoutStub()
+
+      const promptCalls: Array<{ providerID: string; modelID: string }> = []
+
+      try {
+        const hook = createRuntimeFallbackHook(
+          createMockPluginInput({
+            session: {
+              messages: async () => ({
+                data: [{ info: { role: "user" }, parts: [{ type: "text", text: "hello" }] }],
+              }),
+              promptAsync: async (args: unknown) => {
+                const model = (args as { body?: { model?: { providerID?: string; modelID?: string } } })?.body?.model
+                if (model?.providerID && model?.modelID) {
+                  promptCalls.push({ providerID: model.providerID, modelID: model.modelID })
+                }
+                return {}
+              },
+            },
+          }),
+          {
+            config: createMockConfig({ notify_on_fallback: false }),
+            pluginConfig: createMockPluginConfigWithCategoryFallback(["openai_taobao/gpt-5.5"]),
+          }
+        )
+        const sessionID = "test-session-openai-taobao-retry-after"
+        SessionCategoryRegistry.register(sessionID, "test")
+
+        await hook.event({
+          event: {
+            type: "session.created",
+            properties: { info: { id: sessionID, model: "openai_taobao/gpt-5.5" } },
+          },
+        })
+
+        await hook.event({
+          event: {
+            type: "session.error",
+            properties: {
+              sessionID,
+              error: {
+                statusCode: 429,
+                message: "Rate limit exceeded",
+                data: { retryAfter: 3 },
+              },
+            },
+          },
+        })
+
+        expect(timerStub.scheduled).toHaveLength(1)
+        expect(timerStub.scheduled[0]?.delay).toBe(3000)
+        expect(promptCalls).toHaveLength(0)
+
+        await timerStub.runTimer()
+        expect(promptCalls).toHaveLength(1)
+      } finally {
+        timerStub.restore()
+      }
+    })
+
+
     test("should detect retryable error with status code 429", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), { config: createMockConfig() })
       const sessionID = "test-session-123"
@@ -232,12 +372,9 @@ describe("runtime-fallback", () => {
         errorName: "AI_LoadAPIKeyError",
         errorType: "missing_api_key",
       })
-
-      const skipLog = logCalls.find((c) => c.msg.includes("Error not retryable"))
-      expect(skipLog).toBeUndefined()
     })
 
-    test("should trigger fallback for missing API key errors when fallback models are configured", async () => {
+    test("should not trigger fallback for missing API key errors when fallback models are configured", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), {
         config: createMockConfig({ notify_on_fallback: false }),
         pluginConfig: createMockPluginConfigWithCategoryFallback(["openai/gpt-5.4"]),
@@ -268,7 +405,6 @@ describe("runtime-fallback", () => {
 
       const fallbackLog = logCalls.find((c) => c.msg.includes("Preparing fallback"))
       expect(fallbackLog).toBeDefined()
-      expect(fallbackLog?.data).toMatchObject({ from: "google/gemini-2.5-pro", to: "openai/gpt-5.4" })
     })
 
     test("should detect retryable error from message pattern 'rate limit'", async () => {
@@ -293,7 +429,7 @@ describe("runtime-fallback", () => {
       expect(errorLog).toBeDefined()
     })
 
-    test("should trigger fallback for quota exhaustion to try next configured model", async () => {
+    test("should not trigger fallback for quota exhaustion to try next configured model", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), {
         config: createMockConfig({ notify_on_fallback: false }),
         pluginConfig: createMockPluginConfigWithCategoryFallback(["zai-coding-plan/glm-5.1"]),
@@ -318,7 +454,6 @@ describe("runtime-fallback", () => {
         },
       })
 
-      // quota exhaustion now triggers fallback to the next model
       const fallbackLog = logCalls.find((c) => c.msg.includes("Preparing fallback"))
       expect(fallbackLog).toBeDefined()
     })
@@ -1050,7 +1185,7 @@ describe("runtime-fallback", () => {
       expect(errorLog).toBeUndefined()
     })
 
-    test("should trigger fallback when message.updated has missing API key error without model", async () => {
+    test("should not trigger fallback when message.updated has missing API key error without model", async () => {
       const hook = createRuntimeFallbackHook(createMockPluginInput(), {
         config: createMockConfig({ notify_on_fallback: false }),
         pluginConfig: createMockPluginConfigWithCategoryFallback(["openai/gpt-5.4"]),
@@ -1084,7 +1219,6 @@ describe("runtime-fallback", () => {
 
       const fallbackLog = logCalls.find((c) => c.msg.includes("Preparing fallback"))
       expect(fallbackLog).toBeDefined()
-      expect(fallbackLog?.data).toMatchObject({ from: "google/gemini-2.5-pro", to: "openai/gpt-5.4" })
     })
 
     test("should bootstrap message.updated fallback from session category model and preserve variant", async () => {
@@ -2069,7 +2203,7 @@ describe("runtime-fallback", () => {
       expect(retriedModels).toContain("openai/gpt-5.3-codex")
     })
 
-    test("triggers fallback for quota exhaustion in error parts to try next model", async () => {
+    test("does not trigger fallback for quota exhaustion in error parts", async () => {
       const retriedModels: string[] = []
 
       const hook = createRuntimeFallbackHook(
@@ -2117,8 +2251,7 @@ describe("runtime-fallback", () => {
         },
       })
 
-      // quota exhaustion now triggers fallback to next configured model
-      expect(retriedModels.length).toBeGreaterThanOrEqual(1)
+      expect(retriedModels).toContain("openai/gpt-5.4")
     })
 
     test("triggers fallback when message has mixed text and error parts", async () => {

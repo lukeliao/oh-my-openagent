@@ -1,12 +1,18 @@
-import { describe, test, expect, mock, afterAll } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import * as loggerModule from "../../shared/logger"
 
-const mockLog = mock()
-mock.module("../../shared/logger", () => ({ log: mockLog }))
+import { isActiveSessionStatus, isTerminalSessionStatus } from "./session-status-classifier"
 
-afterAll(() => { mock.restore() })
+let logSpy: ReturnType<typeof spyOn<typeof loggerModule, "log">>
 
-const { isActiveSessionStatus, isTerminalSessionStatus } = await import("./session-status-classifier")
-mock.restore()
+afterAll(() => {
+  mock.restore()
+})
+
+beforeEach(() => {
+  mock.restore()
+  logSpy = spyOn(loggerModule, "log").mockImplementation(() => {})
+})
 
 describe("isActiveSessionStatus", () => {
   describe("#given a known active session status", () => {
@@ -29,17 +35,15 @@ describe("isActiveSessionStatus", () => {
     })
 
     test('#when type is "interrupted" #then returns false and does not log', () => {
-      mockLog.mockClear()
       expect(isActiveSessionStatus("interrupted")).toBe(false)
-      expect(mockLog).not.toHaveBeenCalled()
+      expect(logSpy).not.toHaveBeenCalled()
     })
   })
 
   describe("#given an unknown session status", () => {
     test('#when type is an arbitrary unknown string #then returns false and logs warning', () => {
-      mockLog.mockClear()
       expect(isActiveSessionStatus("some-unknown-status")).toBe(false)
-      expect(mockLog).toHaveBeenCalledWith(
+      expect(logSpy).toHaveBeenCalledWith(
         "[background-agent] Unknown session status type encountered:",
         "some-unknown-status",
       )

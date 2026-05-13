@@ -1677,6 +1677,7 @@ The fallback retry session is now created and can be inspected directly.
       client: this.client,
       idleDeferralTimers: this.idleDeferralTimers,
       queuesByKey: this.queuesByKey,
+      parentDirectory: this.directory,
       processKey: (key: string) => this.processKey(key),
       onRetrying: ({ task, source }) => {
         const currentAttempt = getCurrentAttempt(task)

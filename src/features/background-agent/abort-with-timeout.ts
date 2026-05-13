@@ -1,4 +1,4 @@
-import { log } from "../../shared"
+import * as loggerModule from "../../shared/logger"
 import type { OpencodeClient } from "./opencode-client"
 
 export async function abortWithTimeout(
@@ -19,7 +19,7 @@ export async function abortWithTimeout(
     ])
 
     if (result === "timed_out") {
-      log("[background-agent] Session abort timed out; continuing cleanup:", {
+      loggerModule.log("[background-agent] Session abort timed out; continuing cleanup:", {
         sessionID,
         timeoutMs,
       })

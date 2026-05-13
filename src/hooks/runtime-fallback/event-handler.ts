@@ -194,6 +194,7 @@ export function createEventHandler(deps: HookDeps, helpers: AutoRetryHelpers) {
       fallbackModels,
       resolvedAgent,
       source: "session.error",
+      error: (error && typeof error === "object" ? error as Record<string, unknown> : undefined),
     })
   }
 

@@ -10,6 +10,7 @@ import { buildRetryModelPayload } from "./retry-model-payload"
 import { getLastUserRetryParts } from "./last-user-retry-parts"
 import { extractSessionMessages } from "./session-messages"
 import { resolveRegisteredAgentName } from "../../features/claude-code-session-state"
+import { isPacedRetryProvider } from "../../shared/provider-retry-governor"
 
 const SESSION_TTL_MS = 30 * 60 * 1000
 
@@ -96,6 +97,7 @@ export function createAutoRetryHelpers(deps: HookDeps) {
     newModel: string,
     resolvedAgent: string | undefined,
     source: string,
+    delayMs = 0,
   ): Promise<void> => {
     if (sessionRetryInFlight.has(sessionID)) {
       log(`[${HOOK_NAME}] Retry already in flight, skipping (${source})`, { sessionID })
@@ -120,7 +122,7 @@ export function createAutoRetryHelpers(deps: HookDeps) {
 
     sessionRetryInFlight.add(sessionID)
     let retryDispatched = false
-    try {
+    const executeRetry = async () => {
       const messagesResp = await ctx.client.session.messages({
         path: { id: sessionID },
         query: { directory: ctx.directory },
@@ -150,6 +152,40 @@ export function createAutoRetryHelpers(deps: HookDeps) {
       } else {
         log(`[${HOOK_NAME}] No user message found for auto-retry (${source})`, { sessionID })
       }
+    }
+
+    try {
+      if (delayMs > 0 && isPacedRetryProvider(retryModelPayload.model.providerID)) {
+        log(`[${HOOK_NAME}] Delaying retry dispatch`, {
+          sessionID,
+          source,
+          model: newModel,
+          delayMs,
+        })
+
+        const timer = setTimeout(async () => {
+          sessionFallbackTimeouts.delete(sessionID)
+          try {
+            await executeRetry()
+          } catch (retryError) {
+            log(`[${HOOK_NAME}] Auto-retry failed (${source})`, { sessionID, error: String(retryError) })
+          } finally {
+            sessionRetryInFlight.delete(sessionID)
+            if (!retryDispatched) {
+              sessionAwaitingFallbackResult.delete(sessionID)
+              clearSessionFallbackTimeout(sessionID)
+              const state = sessionStates.get(sessionID)
+              if (state?.pendingFallbackModel) {
+                state.pendingFallbackModel = undefined
+              }
+            }
+          }
+        }, delayMs)
+        sessionFallbackTimeouts.set(sessionID, timer)
+        return
+      }
+
+      await executeRetry()
     } catch (retryError) {
       log(`[${HOOK_NAME}] Auto-retry failed (${source})`, { sessionID, error: String(retryError) })
     } finally {
