@@ -626,4 +626,5 @@ describe("createEventHandler - model fallback", () => {
     expect(abortCalls).toEqual([])
     expect(promptCalls).toEqual([])
   })
+
 })

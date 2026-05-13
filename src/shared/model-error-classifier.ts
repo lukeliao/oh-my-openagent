@@ -10,7 +10,6 @@ const RETRYABLE_ERROR_NAMES = new Set([
   "ratelimiterror",
   "modelunavailableerror",
   "providerconnectionerror",
-  "authenticationerror",
 ])
 
 const STOP_ERROR_NAMES = new Set([
@@ -24,6 +23,9 @@ const STOP_ERROR_NAMES = new Set([
  * These errors are typically user-induced or fixable without switching models.
  */
 const NON_RETRYABLE_ERROR_NAMES = new Set([
+  "authenticationerror",
+  "providerautherror",
+  "missingapikeyerror",
   "messageabortederror",
   "permissiondeniederror",
   "contextlengtherror",
@@ -151,6 +153,17 @@ export function isRetryableModelError(error: ErrorInfo): boolean {
   if (hasProviderAutoRetrySignal(msg)) {
     return true
   }
+
+  if (
+    /invalid\s+api\s+key/.test(msg)
+    || /api\s+key\s+is\s+missing/.test(msg)
+    || /authentication\s+failed/.test(msg)
+    || /unauthorized/.test(msg)
+    || /credential/.test(msg)
+  ) {
+    return false
+  }
+
   return RETRYABLE_MESSAGE_PATTERNS.some((pattern) => msg.includes(pattern))
 }
 

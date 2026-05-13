@@ -41,6 +41,30 @@ describe("model-error-classifier", () => {
     expect(result).toBe(true)
   })
 
+  test("treats AuthenticationError as non-retryable", () => {
+    //#given
+    const error = { name: "AuthenticationError", message: "Invalid API key" }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(false)
+  })
+
+  test("treats missing API key message as non-retryable", () => {
+    //#given
+    const error = {
+      message: "Google Generative AI API key is missing. Pass it using the apiKey parameter.",
+    }
+
+    //#when
+    const result = shouldRetryError(error)
+
+    //#then
+    expect(result).toBe(false)
+  })
+
   test("selectFallbackProvider prefers first connected provider in preference order", () => {
     //#given
     readConnectedProvidersCacheSpy?.mockReturnValue(["anthropic", "nvidia"])

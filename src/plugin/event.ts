@@ -36,12 +36,16 @@ import { extractRetryAttempt, normalizeRetryStatusMessage } from "../shared/retr
 import { clearSessionModel, getSessionModel, setSessionModel } from "../shared/session-model-state";
 import { clearSessionPromptParams } from "../shared/session-prompt-params-state";
 import { deleteSessionTools } from "../shared/session-tools-store";
+import { decidePacedRetry, extractRetryAfterMs, isPacedRetryProvider } from "../shared/provider-retry-governor";
+import { classifyRetryFailureReason } from "../shared/provider-retry-governor";
+import type { RetryableErrorLike } from "../shared/provider-retry-governor";
 import { lspManager } from "../tools";
 import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
 import { createTeamIdleWakeHint } from "../hooks/team-session-events/team-idle-wake-hint";
 import { createTeamLeadOrphanHandler } from "../hooks/team-session-events/team-lead-orphan-handler";
 import { createTeamMemberErrorHandler } from "../hooks/team-session-events/team-member-error-handler";
 import { createTeamMemberStatusHandler } from "../hooks/team-session-events/team-member-status-handler";
+import { emitProviderExhaustionSummary } from "../hooks/shared/provider-exhaustion-summary";
 
 import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
@@ -156,6 +160,16 @@ export function createEventHandler(args: {
   const pluginContext = ctx as PluginContext & {
     directory: string;
     client: {
+      tui: {
+        showToast: (input: {
+          body: {
+            title: string;
+            message: string;
+            variant: "success" | "error" | "info" | "warning";
+            duration: number;
+          };
+        }) => Promise<unknown>;
+      };
       session: {
         abort: (input: { path: { id: string } }) => Promise<unknown>;
         promptAsync?: (input: {
@@ -208,6 +222,126 @@ export function createEventHandler(args: {
   const lastHandledModelErrorMessageID = new Map<string, string>();
   const lastHandledRetryStatusKey = new Map<string, string>();
   const lastKnownModelBySession = new Map<string, { providerID: string; modelID: string }>();
+  const pacedRetryStateBySession = new Map<string, { attemptCount?: number; startedAt?: number; retryElapsedMs?: number }>();
+  const pacedRetryTerminalSummaryKeyBySession = new Map<string, string>();
+  const pacedRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const clearPacedRetryTimer = (sessionID: string): void => {
+    const timer = pacedRetryTimers.get(sessionID);
+    if (timer) {
+      clearTimeout(timer);
+      pacedRetryTimers.delete(sessionID);
+    }
+  };
+
+  const clearPacedRetryState = (sessionID: string): void => {
+    pacedRetryStateBySession.delete(sessionID);
+    pacedRetryTerminalSummaryKeyBySession.delete(sessionID);
+    clearPacedRetryTimer(sessionID);
+  };
+
+  const schedulePacedAutoContinue = async (
+    sessionID: string,
+    source: string,
+    fallbackContext: {
+      agentName?: string;
+      providerID?: string;
+      modelID?: string;
+    },
+    error?: unknown,
+  ): Promise<boolean> => {
+    if (!isPacedRetryProvider(fallbackContext.providerID)) {
+      return false;
+    }
+
+    const currentState = pacedRetryStateBySession.get(sessionID);
+    const decision = decidePacedRetry(currentState, {
+      providerID: fallbackContext.providerID,
+      retryAfterMs: extractRetryAfterMs((error ?? {}) as Record<string, unknown>),
+    });
+    if (decision.exhausted) {
+      const nextState = {
+        attemptCount: decision.nextAttemptCount,
+        startedAt: currentState?.startedAt ?? Date.now(),
+        retryElapsedMs: decision.retryElapsedMs,
+      }
+      pacedRetryStateBySession.set(sessionID, nextState);
+      await emitProviderExhaustionSummary({
+        directory: pluginContext.directory,
+        sessionID,
+        providerID: fallbackContext.providerID,
+        retryAttempts: decision.nextAttemptCount,
+        retryElapsedMs: decision.retryElapsedMs,
+        lastError: classifyRetryFailureReason(error as RetryableErrorLike | undefined),
+        terminalReason: "provider_exhausted",
+        summaryKeyStore: {
+          get current() {
+            return pacedRetryTerminalSummaryKeyBySession.get(sessionID)
+          },
+          set current(value: string | undefined) {
+            if (typeof value === "string") {
+              pacedRetryTerminalSummaryKeyBySession.set(sessionID, value)
+              return
+            }
+            pacedRetryTerminalSummaryKeyBySession.delete(sessionID)
+          },
+        },
+        showToast: pluginContext.client.tui.showToast,
+      })
+      return true;
+    }
+
+    pacedRetryStateBySession.set(sessionID, {
+      attemptCount: decision.nextAttemptCount,
+      startedAt: currentState?.startedAt ?? Date.now(),
+      retryElapsedMs: decision.retryElapsedMs,
+    });
+    clearPacedRetryTimer(sessionID);
+    const timer = setTimeout(async () => {
+      pacedRetryTimers.delete(sessionID);
+      await autoContinueAfterFallback(sessionID, source, fallbackContext);
+    }, decision.delayMs);
+    pacedRetryTimers.set(sessionID, timer);
+    return true;
+  };
+
+  const emitPacedRetryContinuationFailureSummary = async (
+    sessionID: string,
+    fallbackContext: {
+      agentName?: string;
+      providerID?: string;
+      modelID?: string;
+    } | undefined,
+    error: unknown,
+  ): Promise<void> => {
+    if (!isPacedRetryProvider(fallbackContext?.providerID)) {
+      return;
+    }
+
+    const currentState = pacedRetryStateBySession.get(sessionID);
+    await emitProviderExhaustionSummary({
+      directory: pluginContext.directory,
+      sessionID,
+      providerID: fallbackContext?.providerID,
+      retryAttempts: currentState?.attemptCount ?? 0,
+      retryElapsedMs: currentState?.retryElapsedMs ?? 0,
+      lastError: classifyRetryFailureReason(error as RetryableErrorLike | undefined),
+      terminalReason: "provider_exhausted",
+      summaryKeyStore: {
+        get current() {
+          return pacedRetryTerminalSummaryKeyBySession.get(sessionID)
+        },
+        set current(value: string | undefined) {
+          if (typeof value === "string") {
+            pacedRetryTerminalSummaryKeyBySession.set(sessionID, value)
+            return
+          }
+          pacedRetryTerminalSummaryKeyBySession.delete(sessionID)
+        },
+      },
+      showToast: pluginContext.client.tui.showToast,
+    })
+  };
 
   const resolveFallbackProviderID = (sessionID: string, providerHint?: string): string => {
     const sessionModel = getSessionModel(sessionID);
@@ -390,12 +524,14 @@ export function createEventHandler(args: {
     if (typeof pluginContext.client.session.promptAsync === "function") {
       await pluginContext.client.session.promptAsync(promptBody).catch((error) => {
         log("[event] model-fallback promptAsync failed", { sessionID, source, error });
+        return emitPacedRetryContinuationFailureSummary(sessionID, fallbackContext, error)
       });
       return;
     }
 
     await pluginContext.client.session.prompt(promptBody).catch((error) => {
       log("[event] model-fallback prompt failed", { sessionID, source, error });
+      return emitPacedRetryContinuationFailureSummary(sessionID, fallbackContext, error)
     });
   };
 
@@ -524,6 +660,7 @@ export function createEventHandler(args: {
         firstMessageVariantGate.clear(sessionInfo.id);
         clearSessionModel(sessionInfo.id);
         clearSessionPromptParams(sessionInfo.id);
+        clearPacedRetryState(sessionInfo.id);
         syncSubagentSessions.delete(sessionInfo.id);
         if (pluginConfig.openclaw) {
           await dispatchOpenClawEvent({
@@ -553,6 +690,13 @@ export function createEventHandler(args: {
       await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
     }
 
+    if ((event.type as string) === "session.stop") {
+      const sessionID = props?.sessionID as string | undefined;
+      if (sessionID) {
+        clearPacedRetryState(sessionID);
+      }
+    }
+
     if (event.type === "message.removed") {
       const messageID = props?.messageID as string | undefined;
       const sessionID = props?.sessionID as string | undefined;
@@ -575,6 +719,10 @@ export function createEventHandler(args: {
     }
 
     if (event.type === "session.idle") {
+      const sessionID = props?.sessionID as string | undefined;
+      if (sessionID) {
+        clearPacedRetryTimer(sessionID);
+      }
       managers.tmuxSessionManager?.onEvent?.(event);
       await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
       await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
@@ -649,6 +797,13 @@ export function createEventHandler(args: {
                   !hooks.stopContinuationGuard?.isStopped(sessionID)
                 ) {
                   lastHandledModelErrorMessageID.set(sessionID, assistantMessageID);
+                  if (await schedulePacedAutoContinue(sessionID, "message.updated", {
+                    agentName,
+                    providerID: currentProvider,
+                    modelID: currentModel,
+                  }, assistantError)) {
+                    return;
+                  }
                   await autoContinueAfterFallback(sessionID, "message.updated", {
                     agentName,
                     providerID: currentProvider,
@@ -717,6 +872,13 @@ export function createEventHandler(args: {
                 shouldAutoRetrySession(sessionID) &&
                 !hooks.stopContinuationGuard?.isStopped(sessionID)
               ) {
+                if (await schedulePacedAutoContinue(sessionID, "session.status", {
+                  agentName,
+                  providerID: currentProvider,
+                  modelID: currentModel,
+                }, { message: retryMessage })) {
+                  return;
+                }
                 await autoContinueAfterFallback(sessionID, "session.status", {
                   agentName,
                   providerID: currentProvider,
@@ -809,6 +971,13 @@ export function createEventHandler(args: {
               shouldAutoRetrySession(sessionID) &&
               !hooks.stopContinuationGuard?.isStopped(sessionID)
             ) {
+              if (await schedulePacedAutoContinue(sessionID, "session.error", {
+                agentName,
+                providerID: currentProvider,
+                modelID: currentModel,
+              }, error)) {
+                return;
+              }
               await autoContinueAfterFallback(sessionID, "session.error", {
                 agentName,
                 providerID: currentProvider,

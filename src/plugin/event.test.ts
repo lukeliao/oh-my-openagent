@@ -1,12 +1,17 @@
 /// <reference path="../../bun-test.d.ts" />
 import { describe, it, expect, afterEach, mock, spyOn } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
+import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { tmpdir } from "node:os"
 
 import { createEventHandler, extractErrorMessage } from "./event"
 import { createChatMessageHandler } from "./chat-message"
+import { createToolExecuteBeforeHandler } from "./tool-execute-before"
 import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
 import { _resetForTesting, setMainSession, subagentSessions } from "../features/claude-code-session-state"
 import { clearPendingModelFallback, createModelFallbackHook } from "../hooks/model-fallback/hook"
+import { createBoulderState, readBoulderState, readWorkStopDetail, writeBoulderState } from "../features/boulder-state/storage"
 import { getSessionPromptParams, setSessionPromptParams } from "../shared/session-prompt-params-state"
 
 type EventInput = { event: { type: string; properties?: unknown } }
@@ -133,9 +138,20 @@ async function flushMicrotasks(turns: number = 5): Promise<void> {
 	}
 }
 
+const tempDirectories: string[] = []
+
+function createTempDirectory(prefix: string): string {
+	const directory = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+	tempDirectories.push(directory)
+	return directory
+}
+
 afterEach(() => {
 	mock.restore()
 	_resetForTesting()
+	for (const directory of tempDirectories.splice(0)) {
+		rmSync(directory, { recursive: true, force: true })
+	}
 })
 
 describe("event error extraction", () => {
@@ -1564,5 +1580,88 @@ describe("createEventHandler - session recovery compaction", () => {
 		expect(thrownError).toBeUndefined()
 		expect(runtimeFallbackCalls).toHaveLength(1)
 		expect(runtimeFallbackCalls[0]?.event.type).toBe("session.error")
+	})
+})
+
+describe("createEventHandler - terminal summary distinctness", () => {
+	it("uses /stop-continuation to persist paused_by_user as a distinct terminal state", async () => {
+		const directory = createTempDirectory("event-stop-summary")
+		const planPath = join(directory, ".sisyphus", "plans", "task-6-stop.md")
+		mkdirSync(dirname(planPath), { recursive: true })
+		writeFileSync(planPath, "# Task 6 stop\n- [ ] stop")
+		writeBoulderState(directory, createBoulderState(planPath, "ses_stop_summary", "atlas"))
+
+		const stop = mock(() => {})
+		const cancelAllCountdowns = mock(() => {})
+		const cancelLoop = mock(() => {})
+		const handler = createToolExecuteBeforeHandler({
+			ctx: asEventHandlerContext({
+				directory,
+				client: { session: { messages: async () => ({ data: [] }) } },
+			}),
+			hooks: {
+				stopContinuationGuard: { stop, isStopped: () => false, clear: () => {} },
+				todoContinuationEnforcer: { cancelAllCountdowns },
+				ralphLoop: { cancelLoop },
+			},
+		})
+
+		await handler(
+			{ tool: "skill", sessionID: "ses_stop_summary", callID: "call-stop" },
+			{ args: { name: "/stop-continuation" } },
+		)
+
+		expect(stop).toHaveBeenCalledWith("ses_stop_summary")
+		expect(cancelAllCountdowns).toHaveBeenCalledTimes(1)
+		expect(cancelLoop).toHaveBeenCalledWith("ses_stop_summary")
+		expect(readBoulderState(directory)?.status).toBe("paused_by_user")
+		expect(readWorkStopDetail(directory)).toMatchObject({
+			reason: "paused_by_user",
+		})
+		expect(readWorkStopDetail(directory)?.exhausted_provider).toBeUndefined()
+	})
+	
+	it("does not emit duplicate terminal summaries when repeated retry observer events arrive", async () => {
+		const runtimeFallbackCalls: EventInput[] = []
+		const eventHandler = createEventHandler({
+			ctx: asEventHandlerContext({
+				directory: "/tmp",
+				client: {
+					session: {
+						abort: async () => ({}),
+						prompt: async () => ({}),
+					},
+				},
+			}),
+			pluginConfig: asPluginConfig({}),
+			firstMessageVariantGate: {
+				markSessionCreated: () => {},
+				clear: () => {},
+			},
+			managers: createEventHandlerManagers(),
+			hooks: createEventHandlerHooks({
+				runtimeFallback: {
+					event: async (input: EventInput) => {
+						runtimeFallbackCalls.push(input)
+					},
+				},
+				stopContinuationGuard: { isStopped: () => false },
+			}),
+		})
+
+		const repeated = asEventHandlerInput({
+			event: {
+				type: "session.error",
+				properties: {
+					sessionID: "ses_runtime_repeat",
+					error: { name: "Error", message: "retry me" },
+				},
+			},
+		})
+
+		await eventHandler(repeated)
+		await eventHandler(repeated)
+
+		expect(runtimeFallbackCalls).toHaveLength(2)
 	})
 })
